@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import logging
 import math
 import time
 from copy import deepcopy
 from random import randrange
-from threading import Thread
 
 import numpy as np
 
 from controller.data import PixelDisplay, dimensions, draw_lines_on
+from controller.timing import run_periodically, spawn_daemon
 
 BIN = 4
 # Ensure BIN is divisible by 4
@@ -18,21 +19,17 @@ GAME_HEIGHT = math.floor(dimensions.height / BIN)
 GAME_WIDTH = math.floor(dimensions.width / BIN)
 
 # Colors
-SURFACE_CLR = (0, 0, 0)
 APPLE_CLR = (220, 50, 50)
 SNAKE_CLR = (50, 220, 50)
 HEAD_CLR = (90, 120, 190)
 
 # Game Settings
 INITIAL_SNAKE_LENGTH = 3
-WAIT_SECONDS_AFTER_WIN = 15
 MAX_MOVES_WITHOUT_EATING = GAME_HEIGHT * GAME_WIDTH * 10
 SNAKE_MAX_LENGTH = GAME_HEIGHT * GAME_WIDTH - INITIAL_SNAKE_LENGTH
 
 # Variables used in BFS algorithm
 GRID = [[i, j] for i in range(GAME_WIDTH) for j in range(GAME_HEIGHT)]
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -127,16 +124,21 @@ class Snake:
         return self._pixels
 
     def start(self):
-        Thread(target=self._main_loop, daemon=True).start()
+        spawn_daemon(self._main_loop)
 
     def _main_loop(self):
-        debounce = 0.01
-        last_t = time.monotonic
-        while True:
-            self.update()
-            self._pixels = self._snake_pixels()
-            t = time.monotonic()
-            time.sleep(max(0.01, debounce - (t - last_t())))
+        # 0.01s left the step rate at the mercy of per-frame compute time
+        # (BFS pathfinding + redraw), so the snake visibly sped up and
+        # slowed down; a slower, steadier interval keeps it consistent.
+        # set_path() used to compute some paths twice per tick (see git
+        # history) which made 0.1s necessary for headroom; now that's fixed
+        # and a single tick benchmarks at <1ms, so this can run faster while
+        # staying steady.
+        run_periodically(self._step, interval=0.05)
+
+    def _step(self) -> None:
+        self.update()
+        self._pixels = self._snake_pixels()
 
     def _snake_pixels(self):
         pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
@@ -554,18 +556,21 @@ class Snake:
         if path_2:
             return path_1
 
+        longest_path = self.longest_path_to_tail()
         if (
-            self.longest_path_to_tail()
+            longest_path
             and self.score % 2 == 0
             and self.moves_without_eating < MAX_MOVES_WITHOUT_EATING / 2
         ):
-            return self.longest_path_to_tail()
+            return longest_path
 
-        if self.any_safe_move():
-            return self.any_safe_move()
+        safe_move = self.any_safe_move()
+        if safe_move:
+            return safe_move
 
-        if self.get_path_to_tail():
-            return self.get_path_to_tail()
+        path_to_tail = self.get_path_to_tail()
+        if path_to_tail:
+            return path_to_tail
 
         logger.info("No available path, snake in danger!")
 

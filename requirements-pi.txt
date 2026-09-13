@@ -1,0 +1,10 @@
+# Pinned runtime dependencies for the Raspberry Pi's stock Python 3.9
+# (Raspbian Bullseye only ships Python 3.8/3.9 - see README "Deploying to a
+# Raspberry Pi"). These are the newest versions of each package that still
+# publish a cp39 wheel for armv7l on piwheels; keep this file separate from
+# pyproject.toml/uv.lock, which target the newer Python used for local dev.
+numpy==2.0.2
+pillow==11.1.0
+requests==2.32.3
+python-dotenv==1.0.1
+typing_extensions>=4.0  # typing.ParamSpec is 3.10+; controller/data.py falls back to this

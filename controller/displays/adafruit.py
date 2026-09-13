@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import sys
 
@@ -6,14 +7,14 @@ from PIL import Image
 
 from controller.data import PixelDisplay, dimensions, validate_pixels
 from controller.displays import DisplayProtocol
-import logging
 
 logger = logging.getLogger(__name__)
 
 try:
-    from rgbmatrix import RGBMatrix, RGBMatrixOptions
-except:
-    logger.info("Could not import afafruit rgbmatrix")
+    from rgbmatrix import RGBMatrix, RGBMatrixOptions  # type: ignore[import-not-found]
+except ImportError:
+    logger.info("Could not import adafruit rgbmatrix")
+    RGBMatrix = RGBMatrixOptions = None
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
 
@@ -26,7 +27,6 @@ class AdaFruit(DisplayProtocol):
             "-r",
             "--led-rows",
             action="store",
-            # help="Display rows. 16 for 16x32, 32 for 32x32. Default: 32",
             help=f"Display rows. 16 for 16x32, 32 for 32x32. Default: {dimensions.height}",
             default=dimensions.height,
             type=int,
@@ -34,7 +34,6 @@ class AdaFruit(DisplayProtocol):
         self.parser.add_argument(
             "--led-cols",
             action="store",
-            # help="Panel columns. Typically 32 or 64. (Default: 64)",
             help=f"Panel columns. Typically 32 or 64. (Default: {dimensions.width})",
             default=dimensions.width,
             type=int,
@@ -173,9 +172,9 @@ class AdaFruit(DisplayProtocol):
 
         self.args = self.parser.parse_args()
 
-        options = RGBMatrixOptions()
+        options = RGBMatrixOptions()  # type: ignore[misc]
 
-        if self.args.led_gpio_mapping != None:
+        if self.args.led_gpio_mapping is not None:
             options.hardware_mapping = self.args.led_gpio_mapping
         options.rows = self.args.led_rows
         options.cols = self.args.led_cols
@@ -196,14 +195,14 @@ class AdaFruit(DisplayProtocol):
         if self.args.led_show_refresh:
             options.show_refresh_rate = 1
 
-        if self.args.led_slowdown_gpio != None:
+        if self.args.led_slowdown_gpio is not None:
             options.gpio_slowdown = self.args.led_slowdown_gpio
         if self.args.led_no_hardware_pulse:
             options.disable_hardware_pulsing = True
         if not self.args.drop_privileges:
             options.drop_privileges = False
 
-        self.matrix = RGBMatrix(options=options)
+        self.matrix = RGBMatrix(options=options)  # type: ignore[misc]
 
     @validate_pixels
     def display_matrix(self, pixels: PixelDisplay):

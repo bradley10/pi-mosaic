@@ -1,27 +1,15 @@
-from __future__ import annotations
-
 import random
-import time
-from threading import Thread
-from typing import TYPE_CHECKING
-
-from controller.data import PixelDisplay
-
-if TYPE_CHECKING:
-    from controller import Controller
 
 import numpy as np
 
-from controller.data import dimensions
+from controller.data import PixelDisplay, dimensions
+from controller.timing import run_periodically, spawn_daemon
 
 
 class Ball:
     _BG = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
 
-    def __init__(self, controller: Controller):
-        self.controller = controller
-        self.ball_last_update = time.time()
-
+    def __init__(self):
         self.ball_frequency_hz = 10
 
         # ball_width:ball_height ratio must not be the same as width:height,
@@ -35,7 +23,6 @@ class Ball:
         self.ball_x_position = dimensions.width // 2 - self.ball_width
         self.ball_y_position = dimensions.height // 2 - self.ball_height
 
-        self.ball_distance_traveled = 0  # in mm
         self._pixels = self._BG.copy()
 
         self.ball_color = (255, 255 // 2, 255 // 2)
@@ -47,22 +34,13 @@ class Ball:
 
     def start(self):
         """Polling method placeholder."""
-        Thread(target=self._main_loop, daemon=True).start()
+        spawn_daemon(self._main_loop)
 
     def _main_loop(self):
         """Main loop for the ball program."""
-        while True:
-            self._pixels = self._ball_pixels()
+        run_periodically(self._step, 1 / self.ball_frequency_hz)
 
-    def _ball_pixels(self) -> PixelDisplay:
-        # wait until it is time to update
-        time_between = 1 / self.ball_frequency_hz
-        time_delta = time.time() - self.ball_last_update
-        if time_delta < time_between:
-            # waiting rather than returning until the next loop iteration
-            # to get an accuracte frequency
-            time.sleep(time_between - time_delta)
-
+    def _step(self) -> None:
         pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
 
         # move
@@ -98,6 +76,4 @@ class Ball:
                 random.randint(0, 255),
             )
 
-        # display the ball
-        self.ball_last_update = time.time()
-        return pixels
+        self._pixels = pixels

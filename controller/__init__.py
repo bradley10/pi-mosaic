@@ -1,19 +1,21 @@
+from __future__ import annotations
+
+import logging
 import sys
 import time
-import logging
-from asyncio import new_event_loop
-from typing import Union
 
 import numpy as np
 
-from controller.displays.adafruit import AdaFruit
+from controller.displays.dual import Dual
 from controller.displays.simulate import Simulate
 from controller.programs.ball import Ball
 from controller.programs.clock import Clock
-from controller.programs.mbta import Mbta
+from controller.programs.gallery import create_paintings
+from controller.programs.lava_lamp import LavaLamp
+from controller.programs.metaballs import Metaballs
+from controller.programs.moon import Moon
 from controller.programs.snake import Snake
-from controller.programs.test import Test
-from controller.sim_keyboard import SimKeyboard
+from controller.programs.ticker import Ticker
 
 # Configure logging
 logging.basicConfig(
@@ -23,59 +25,95 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DisplayType = Union[Simulate, AdaFruit]
-
 
 class Controller:
     def __init__(self):
         self.simulate = len(sys.argv) > 1 and sys.argv[1] == "simulate"
 
         self._program = 0
-        self.mode = 0
 
-        self.display = Simulate() if self.simulate else AdaFruit()
-        self.clock = Clock(self)
-        self.mbta = Mbta(self)
-        self.ball = Ball(self)
+        self.clock = Clock()
+        self.ball = Ball()
         self.snake = Snake()
-        self.test = Test(self)
-        self.keyboard = SimKeyboard() if self.simulate else None
+        self.moon = Moon()
+        self.metaballs = Metaballs()
+        self.lava_lamp = LavaLamp()
+        self.ticker = Ticker()
+        # Reads .npy asset files from disk, so must be constructed before
+        # Dual/AdaFruit below - see the privilege-drop note there.
+        self.paintings = create_paintings()
+
+        if self.simulate:
+            self.display: Simulate | Dual = Simulate()
+            self.keyboard: Simulate | Dual = self.display
+        else:
+            # Drives the physical LED matrix and mirrors the same frames to
+            # the web simulator at the same time, so it can also be viewed
+            # and controlled remotely (e.g. over Tailscale).
+            self.display = Dual()
+            self.keyboard = self.display
 
     def start(self):
         self._main_loop()
 
     def _main_loop(self):
-        self.clock.start()
-        self.mbta.start()
-        self.ball.start()
-        self.snake.start()
-        self.test.start()
+        programs = [
+            self.clock,
+            self.ball,
+            self.snake,
+            self.moon,
+            self.metaballs,
+            self.lava_lamp,
+            self.ticker,
+            *self.paintings,
+        ]
+        for program in programs:
+            program.start()
 
         pixels = None
-        # Example list of programs; adjust as needed:
-        programs = [self.mbta, self.clock, self.ball, self.snake, self.test]
 
         # Track the last seen counts from the keyboard
         last_button_a = 0
         last_button_b = 0
 
         while True:
-            # If keyboard is available, check for new presses.
-            if self.keyboard is not None:
-                # When button A is pressed, switch programs.
-                if self.keyboard.button_a_index > last_button_a:
-                    last_button_a = self.keyboard.button_a_index
-                    self._program = (self._program + 1) % len(programs)
-                    logger.info(f"Switched program to index {self._program}")
+            # NEXT: advance one page per press, even if several presses land
+            # between loop ticks.
+            presses_a = self.keyboard.button_a_index - last_button_a
+            if presses_a > 0:
+                last_button_a = self.keyboard.button_a_index
+                self._program = (self._program + presses_a) % len(programs)
+                logger.info(f"Switched program to index {self._program} (next)")
 
-                # When button B is pressed, print the count.
-                if self.keyboard.button_b_index > last_button_b:
-                    last_button_b = self.keyboard.button_b_index
-                    logger.info(f"Button B pressed, count: {last_button_b}")
+            # BACK: same, in reverse.
+            presses_b = self.keyboard.button_b_index - last_button_b
+            if presses_b > 0:
+                last_button_b = self.keyboard.button_b_index
+                self._program = (self._program - presses_b) % len(programs)
+                logger.info(f"Switched program to index {self._program} (back)")
+
+            # Clicking a page directly in the web gallery view jumps
+            # straight to it.
+            take_pending_select = getattr(self.keyboard, "take_pending_select", None)
+            selected = take_pending_select() if take_pending_select else None
+            if selected is not None and 0 <= selected < len(programs):
+                self._program = selected
+                logger.info(f"Switched program to index {self._program} (selected)")
+
             # Update the display only if pixels change.
             new_pixels = programs[self._program].pixels
             if pixels is None or not np.array_equal(pixels, new_pixels):
                 pixels = new_pixels
                 self.display.display_matrix(pixels=pixels)
+
+            # The simulator's gallery view wants every program's frame at
+            # once; real hardware only ever shows the one active program.
+            if hasattr(self.display, "display_gallery"):
+                self.display.display_gallery(
+                    [
+                        (getattr(p, "display_name", type(p).__name__), p.pixels)
+                        for p in programs
+                    ]
+                )
 
             time.sleep(0.005)

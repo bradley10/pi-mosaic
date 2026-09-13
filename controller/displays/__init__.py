@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import List, Protocol, Tuple
+from typing import Protocol
 
 from controller.data import PixelDisplay
 

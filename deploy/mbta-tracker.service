@@ -1,0 +1,15 @@
+[Unit]
+Description=MBTA Tracker LED matrix controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/mbta-tracker
+ExecStart=/home/pi/mbta-tracker/venv/bin/python -m controller
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,8 +1,12 @@
-import json
 from dataclasses import dataclass
 from functools import wraps
 from math import floor
-from typing import Callable, List, Tuple
+from typing import Callable, List, Optional, Tuple, TypeVar
+
+try:
+    from typing import ParamSpec  # 3.10+
+except ImportError:
+    from typing_extensions import ParamSpec  # Pi's Python 3.9
 
 import numpy as np
 
@@ -19,7 +23,7 @@ class Character:
 
     character_value: List[int]
     """ The pixel representation of the character key.
-    
+
      ex: '[0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000]' """
 
     width_px: int
@@ -42,14 +46,13 @@ class DisplayDimensions:
 dimensions = DisplayDimensions(width=64, height=32, data_type=np.dtype(np.int32))
 
 
-def save_json(data: dict, filename: str):
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=2)
+P = ParamSpec("P")
+T = TypeVar("T")
 
 
-def validate_pixels(func: Callable):
+def validate_pixels(func: Callable[P, T]) -> Callable[P, T]:
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
         pixels = kwargs.get("pixels")
         if pixels is None:
             raise ValueError("pixels is a required property")
@@ -144,7 +147,7 @@ def draw_lines_on(
             if raise_on_overflow:
                 if col_index + character.width_px > dimensions.width:
                     raise ValueError(
-                        f"Text too long: '{line}' for {line} got {col_index + character.width_px}"
+                        f"Text too long: '{line}' got {col_index + character.width_px}"
                     )
 
                 if row_index + character.height_px > dimensions.width:
@@ -168,7 +171,8 @@ def draw_lines_on(
 def str_to_lines(
     st: str,
 ) -> List[str]:
-    """Given a string `st`, return a list of lines that fit within the display dimensions."""
+    """Given a string `st`, return a list of lines that fit within the display
+    dimensions."""
 
     col_index = 0
     lines = []
@@ -193,6 +197,38 @@ def str_to_lines(
     # Add last line
     if len(line) > 0:
         lines.append(line)
+
+    return lines
+
+
+def wrap_words(text: str, max_width: Optional[int] = None) -> List[str]:
+    """Wrap `text` into lines that fit `max_width` (defaults to the display
+    width), breaking only on spaces so a word is never split mid-word. Falls
+    back to a hard character break only if a single word alone is too wide.
+    """
+    if max_width is None:
+        max_width = dimensions.width
+
+    words = text.split(" ")
+    lines: List[str] = []
+    current = ""
+
+    for word in words:
+        candidate = f"{current} {word}" if current else word
+        if word_width(candidate) <= max_width:
+            current = candidate
+            continue
+
+        if current:
+            lines.append(current)
+        if word_width(word) <= max_width:
+            current = word
+        else:
+            lines.extend(str_to_lines(word))
+            current = ""
+
+    if current:
+        lines.append(current)
 
     return lines
 
@@ -246,7 +282,6 @@ def parse_bdf_font_to_raw(bdf_filename) -> dict:
         line = lines[idx].strip()
         if line.startswith("STARTCHAR"):
             char_data = {}
-            char_name = line.split(" ", 1)[1]
             idx += 1
             while not lines[idx].strip().startswith("ENDCHAR"):
                 line = lines[idx].strip()
@@ -276,20 +311,8 @@ def parse_bdf_font_to_raw(bdf_filename) -> dict:
 
             # Process the bitmap data
             width = char_data["bbx"]["width_px"]
-            height = char_data["bbx"]["height"]
             x_offset = char_data["bbx"]["xoffset"]
-            y_offset = char_data["bbx"]["yoffset"]
             bitmap = char_data["bitmap"]
-
-            # Initialize the canvas with empty pixels
-            canvas_height = height + abs(y_offset)
-            canvas = ["0b0" * width for _ in range(canvas_height)]
-
-            # Adjust for y_offset
-            if y_offset < 0:
-                start_row = -y_offset
-            else:
-                start_row = 0
 
             # Process the bitmap lines
             processed_bytes = []
@@ -957,49 +980,6 @@ default_font_raw = {
         ],
         "width_px": 5,
     },
-    #
-    # lowercase numbers
-    #
-    # "0": {
-    #     "bytes": [0b00000, 0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-    #     "width_px": 5
-    # },
-    # "1": {
-    #     "bytes": [0b00000, 0b00010, 0b00110, 0b00010, 0b00010, 0b00010, 0b01111],
-    #     "width_px": 5
-    # },
-    # "2": {
-    #     "bytes": [0b00000, 0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b11111],
-    #     "width_px": 5
-    # },
-    # "3": {
-    #     "bytes": [0b00000, 0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b11110],
-    #     "width_px": 5
-    # },
-    # "4": {
-    #     "bytes": [0b00000, 0b00001, 0b00011, 0b00101, 0b01001, 0b01111, 0b00001],
-    #     "width_px": 5
-    # },
-    # "5": {
-    #     "bytes": [0b00000, 0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110],
-    #     "width_px": 5
-    # },
-    # "6": {
-    #     "bytes": [0b00000, 0b01110, 0b10001, 0b10000, 0b11110, 0b10001, 0b01110],
-    #     "width_px": 5
-    # },
-    # "7": {
-    #     "bytes": [0b00000, 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000],
-    #     "width_px": 5
-    # },
-    # "8": {
-    #     "bytes": [0b00000, 0b01110, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
-    #     "width_px": 5
-    # },
-    # "9": {
-    #     "bytes": [0b00000, 0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b01110],
-    #     "width_px": 5
-    # },
     "0": {
         "bytes": [
             0b01110,
@@ -1517,16 +1497,7 @@ default_font_raw = {
         "width_px": 3,
     },
 }
-Color = Tuple[int, int, int]
-R = (255, 0, 0)
-G = (0, 255, 0)
-B = (0, 0, 255)
-W = (255, 255, 255)
-B = (0, 0, 0)
-# def draw
 
-font_5x7 = parse_raw_font(parse_bdf_font_to_raw("controller/fonts/5x7.bdf"))
-font_6x9 = parse_raw_font(parse_bdf_font_to_raw("controller/fonts/6x9.bdf"))
 font = parse_raw_font(default_font_raw)
 
 assert word_width("a") == 5

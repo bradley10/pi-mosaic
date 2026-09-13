@@ -1,22 +1,32 @@
-from __future__ import annotations
-
 import datetime
+import logging
 import time
-from threading import Thread
-from typing import TYPE_CHECKING
 
 import numpy as np
 import requests
 from requests.adapters import HTTPAdapter, Retry
 
+from controller.color import Color, lerp_color, pulse
 from controller.data import PixelDisplay, dimensions, draw_lines_on
-
-if TYPE_CHECKING:
-    from controller import Controller
-
-import logging
+from controller.sprites import MOON_ICON, SUN, draw_sprite_on
+from controller.timing import run_periodically, spawn_daemon
 
 logger = logging.getLogger(__name__)
+
+COLD_COLOR: Color = (120, 170, 255)
+NEUTRAL_COLOR: Color = (255, 255, 255)
+HOT_COLOR: Color = (255, 90, 70)
+
+
+def _temperature_color(temp_str: str) -> Color:
+    """Cold-blue -> neutral-white -> hot-red gradient by Fahrenheit value."""
+    try:
+        temp = float(temp_str)
+    except (TypeError, ValueError):
+        return NEUTRAL_COLOR
+    if temp <= 70:
+        return lerp_color(NEUTRAL_COLOR, COLD_COLOR, (70 - temp) / 50)
+    return lerp_color(NEUTRAL_COLOR, HOT_COLOR, (temp - 70) / 30)
 
 
 class Clock:
@@ -112,8 +122,7 @@ class Clock:
         6: "Sun",
     }
 
-    def __init__(self, controller: Controller):
-        self.controller = controller
+    def __init__(self):
         self._pixels = self._BG.copy()
 
         self._session = requests.Session()
@@ -136,14 +145,14 @@ class Clock:
 
     def start(self):
         """Start the clock's main loop in a separate thread."""
-        Thread(target=self._main_loop, daemon=True).start()
-        Thread(target=self._http_loop, daemon=True).start()
+        spawn_daemon(self._main_loop)
+        spawn_daemon(self._http_loop)
 
     def _get(self, url: str, params: dict) -> dict:
         """Generic method to fetch data from an http API."""
         try:
             logger.info(f"GET {url} {params}")
-            response = requests.get(url, params=params, timeout=self._TIMEOUT)
+            response = self._session.get(url, params=params, timeout=self._TIMEOUT)
             try:
                 response.raise_for_status()
             except requests.exceptions.HTTPError as http_err:
@@ -151,7 +160,6 @@ class Clock:
                 raise http_err
 
             response_json = response.json()
-            # save_json(response_json, f"{url.split('/')[-1]}.json")
             logger.info(f"Success {response.status_code}")
             return response_json
         except requests.exceptions.HTTPError as http_err:
@@ -202,17 +210,17 @@ class Clock:
             elif t < now:
                 prev_hour = t
             else:
-                return temp
+                return f"{round(temp)}"
 
         if prev_hour is None or next_hour is None:
-            return str(sum(temps) / len(temps))  # Fallback to average temp
+            return f"{sum(temps) / len(temps):.0f}"  # Fallback to average temp
         temp_delta = time_temps[next_hour] - time_temps[prev_hour]
         time_delta = now - prev_hour
         time_since = time_delta.total_seconds() / 3600
 
         interpolated_temp = time_temps[prev_hour] + temp_delta * time_since
 
-        return f"{interpolated_temp:.1f}"
+        return f"{interpolated_temp:.0f}"
 
     def _get_forecast(self) -> dict:
         """Fetch the weather forecast. Request it in America/New_York timezone."""
@@ -230,12 +238,12 @@ class Clock:
 
     def _main_loop(self):
         """Main loop for updating the clock display."""
-        while True:
-            self._pixels = self._clock_pixels()
-            # sleep until next 0.1 second
-            now = datetime.datetime.now()
-            sleep_time = 0.1 - now.microsecond / 1e7
-            time.sleep(max(0.01, sleep_time))
+        # 30ms so the breathing dot (2s period) redraws ~33x/cycle instead of
+        # the old ~10x/cycle, which looked jumpy.
+        run_periodically(self._tick, interval=0.03)
+
+    def _tick(self) -> None:
+        self._pixels = self._clock_pixels()
 
     def _clock_pixels(self) -> PixelDisplay:
         now = datetime.datetime.now()
@@ -268,11 +276,26 @@ class Clock:
                     d,
                 ]
 
-        pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
+        hour_float = hour + minute / 60 + now.second / 3600
+        pixels = self._BG.copy()
+
+        icon = SUN if 7 <= hour_float < 18 else MOON_ICON
+        draw_sprite_on(
+            pixels, icon, row_start=0, col_start=dimensions.width - icon.width_px
+        )
+
+        # Breathing dot in the corner ticks once every 2 seconds, so
+        # something on screen always animates even between minute changes.
+        tick = int(255 * pulse(time.time(), period=2.0))
+        pixels[dimensions.height - 1][0] = (tick, tick, tick)
+
         draw_lines_on(pixels, lines)
+
+        temperature = self._parse_temperature(self._forecast)
         draw_lines_on(
             pixels,
-            [" ", " ", " ", f"-right-{self._parse_temperature(self._forecast)}°F"],
+            [" ", " ", " ", f"-right-{temperature}°F"],
+            color=_temperature_color(temperature),
             vertical_shift=1,
         )
         return pixels
