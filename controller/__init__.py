@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 
 import numpy as np
@@ -26,6 +27,26 @@ logging.basicConfig(
     datefmt="%Y.%m.%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+class ThreadSafeProgram:
+    """Wraps a program to provide thread-safe pixel access via a lock."""
+
+    def __init__(self, program):
+        self._program = program
+        self._lock = threading.Lock()
+        self._last_pixels = None
+
+    def __getattr__(self, name):
+        return getattr(self._program, name)
+
+    @property
+    def pixels(self):
+        with self._lock:
+            return self._program.pixels.copy()
+
+    def start(self):
+        self._program.start()
 
 
 class Controller:
@@ -61,7 +82,7 @@ class Controller:
         self._main_loop()
 
     def _main_loop(self):
-        programs = [
+        raw_programs = [
             self.clock,
             self.ball,
             self.snake,
@@ -73,6 +94,7 @@ class Controller:
             self.tetris,
             *self.paintings,
         ]
+        programs = [ThreadSafeProgram(p) for p in raw_programs]
         for program in programs:
             program.start()
 
@@ -106,7 +128,8 @@ class Controller:
                 self._program = selected
                 logger.info(f"Switched program to index {self._program} (selected)")
 
-            # Update the display only if pixels change.
+            # Poll at 33 FPS instead of 200 FPS to reduce overhead and sync with
+            # most programs' 30ms frame intervals. Thread-safe copy prevents tearing.
             new_pixels = programs[self._program].pixels
             if pixels is None or not np.array_equal(pixels, new_pixels):
                 pixels = new_pixels
@@ -122,4 +145,4 @@ class Controller:
                     ]
                 )
 
-            time.sleep(0.005)
+            time.sleep(0.03)

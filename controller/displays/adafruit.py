@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 
+import numpy as np
 from PIL import Image
 
 from controller.data import PixelDisplay, dimensions, validate_pixels
@@ -206,15 +207,16 @@ class AdaFruit(DisplayProtocol):
 
     @validate_pixels
     def display_matrix(self, pixels: PixelDisplay):
-        # Convertinig to a PIL image and using `SetImage` is much
-        # faster that setting each pixel individually  on a canvas
-        # with `SetPixel`
-        flattened_pixels = [pixel for row in pixels for pixel in row]
-        byte_array = bytearray([value for pixel in flattened_pixels for value in pixel])
+        # Converting to a PIL image and using `SetImage` is much faster than
+        # setting each pixel individually with `SetPixel`. The buffer itself
+        # used to be built with nested Python loops (~6k boxed-int steps per
+        # frame); this runs on every display update for every page, and that
+        # per-pixel work was a real source of visible stutter, so it's
+        # built with a single vectorized numpy conversion instead.
         img = Image.frombuffer(
             "RGB",
             (dimensions.width, dimensions.height),
-            bytes(byte_array),
+            pixels.astype(np.uint8).tobytes(),
             "raw",
             "RGB",
             0,

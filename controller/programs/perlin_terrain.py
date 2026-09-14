@@ -1,119 +1,173 @@
 from __future__ import annotations
 
-import math
-import numpy as np
 import time
+from typing import Tuple
+
+import numpy as np
 
 from controller.data import PixelDisplay, dimensions
 from controller.timing import spawn_daemon
 
-_SCALE = 40.0
-_SPEED = 0.3
-_DETAIL = 2.5
+Color = Tuple[int, int, int]
+
+_SCALE = 16.0  # smaller = more hills/valleys visible across the width
+_SPEED = 0.55  # noise-units/sec scrolled, i.e. how fast the world goes by
+_OCTAVES = 4
+
+# Row bands (0 = top of the display). Land rises toward `_MIN_SURFACE` and
+# the sea floor deepens toward `_MAX_SURFACE`; anything below `_SEA_LEVEL` is
+# underwater. Kept close to the bottom of the display (rather than spanning
+# its full height) so most of a hill's visible cross-section is its thin
+# topsoil layer, not the stone underneath - and there's always plenty of
+# sky above it.
+_SEA_LEVEL = 22
+_MIN_SURFACE = 15
+_MAX_SURFACE = 28
+
+_SKY_TOP: Color = (70, 140, 220)
+_SKY_HORIZON: Color = (185, 225, 248)
+_SHALLOW_WATER: Color = (60, 150, 210)
+_DEEP_WATER: Color = (10, 35, 110)
+_FOAM: Color = (225, 240, 250)
+_SAND: Color = (225, 195, 130)
+_GRASS: Color = (70, 165, 70)
+_FOREST: Color = (35, 110, 50)
+_DIRT: Color = (110, 75, 48)
+_STONE: Color = (125, 125, 130)
+_SNOW: Color = (245, 246, 250)
+
+
+def _lerp_rows(c1: Color, c2: Color, t: np.ndarray) -> np.ndarray:
+    """Lerp between two colors across an array of `t` in [0, 1]; returns an
+    (n, 3) int array, one row per `t`."""
+    t = np.clip(t, 0.0, 1.0)[:, None]
+    return (np.array(c1) + (np.array(c2) - np.array(c1)) * t).astype(np.int32)
+
+
+def _hash(x: np.ndarray) -> np.ndarray:
+    n = np.sin(x * 127.1) * 43758.5453
+    return n - np.floor(n)
+
+
+def _noise_1d(x: np.ndarray) -> np.ndarray:
+    xi = np.floor(x)
+    xf = x - xi
+    n0 = _hash(xi)
+    n1 = _hash(xi + 1)
+    smooth_t = xf * xf * (3.0 - 2.0 * xf)
+    return n0 + (n1 - n0) * smooth_t
+
+
+def _fbm_1d(x: np.ndarray, octaves: int = _OCTAVES) -> np.ndarray:
+    value = np.zeros_like(x)
+    amplitude = 1.0
+    frequency = 1.0
+    max_value = 0.0
+    for _ in range(octaves):
+        value = value + amplitude * _noise_1d(x * frequency)
+        max_value += amplitude
+        amplitude *= 0.5
+        frequency *= 2.0
+    return value / max_value
+
+
+def _ground_top_color(surface_row: int) -> Color:
+    """The surface block color at `surface_row` - lower rows are taller, so
+    this shades from snowy peaks down through forest and grass to beach
+    sand, then to a sandy/rocky seabed once the ground dips underwater."""
+    if surface_row > _SEA_LEVEL:
+        return _SAND if surface_row - _SEA_LEVEL <= 3 else _STONE
+    if surface_row <= _MIN_SURFACE:
+        return _SNOW
+    if surface_row <= _MIN_SURFACE + 2:
+        return _STONE
+    if surface_row <= _SEA_LEVEL - 3:
+        return _FOREST
+    if surface_row <= _SEA_LEVEL - 1:
+        return _GRASS
+    return _SAND
+
+
+def _land_column(depth_below_surface: np.ndarray, top_color: Color) -> np.ndarray:
+    """Below-surface fill for one land column: a thin topsoil layer over
+    dirt over stone, mountains/beaches staying a uniform material."""
+    if top_color == _SAND:
+        return np.tile(np.array(_SAND), (len(depth_below_surface), 1))
+
+    if top_color in (_SNOW, _STONE):
+        is_cap = depth_below_surface == 0
+        return np.where(is_cap[:, None], np.array(top_color), np.array(_STONE))
+
+    is_top = depth_below_surface == 0
+    is_dirt = (depth_below_surface > 0) & (depth_below_surface <= 5)
+    fill = np.broadcast_to(np.array(_STONE), (len(depth_below_surface), 3)).copy()
+    fill[is_dirt] = _DIRT
+    fill[is_top] = top_color
+    return fill
 
 
 class PerlinTerrain:
     def __init__(self):
         self._start_time = time.monotonic()
-        self._pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
+        self._pixels = np.zeros(
+            (dimensions.height, dimensions.width, 3), dtype=np.int32
+        )
 
     @property
     def pixels(self) -> PixelDisplay:
         return self._pixels
 
-    def start(self):
+    def start(self) -> None:
         spawn_daemon(self._main_loop)
 
-    def _main_loop(self):
+    def _main_loop(self) -> None:
         while True:
-            self._step()
             self._pixels = self._render()
             time.sleep(0.03)
 
-    def _step(self) -> None:
-        pass
-
-    def _interpolate(self, a: float, b: float, t: float) -> float:
-        smooth_t = t * t * (3.0 - 2.0 * t)
-        return a + (b - a) * smooth_t
-
-    def _perlin_hash(self, x, y):
-        n = np.sin(x * 12.9898 + y * 78.233) * 43758.5453
-        return n - np.floor(n)
-
-    def _perlin_noise(self, x: float, y: float) -> float:
-        xi = int(math.floor(x))
-        yi = int(math.floor(y))
-        xf = x - xi
-        yf = y - yi
-
-        n00 = self._perlin_hash(xi, yi)
-        n10 = self._perlin_hash(xi + 1, yi)
-        n01 = self._perlin_hash(xi, yi + 1)
-        n11 = self._perlin_hash(xi + 1, yi + 1)
-
-        nx0 = self._interpolate(n00, n10, xf)
-        nx1 = self._interpolate(n01, n11, xf)
-        return self._interpolate(nx0, nx1, yf)
-
-    def _fractal_brownian_motion(self, x: float, y: float, octaves: int = 4) -> float:
-        value = 0.0
-        amplitude = 1.0
-        frequency = 1.0
-        max_value = 0.0
-
-        for _ in range(octaves):
-            value += amplitude * self._perlin_noise(x * frequency, y * frequency)
-            max_value += amplitude
-            amplitude *= 0.5
-            frequency *= 2.0
-
-        return value / max_value
-
     def _render(self) -> PixelDisplay:
-        pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
         t = time.monotonic() - self._start_time
-
         x_coords = np.arange(dimensions.width) / _SCALE + t * _SPEED
-        y_coords = np.arange(dimensions.height) / _SCALE
 
-        xx, yy = np.meshgrid(x_coords, y_coords)
+        noise = _fbm_1d(x_coords)
+        surface = np.clip(
+            np.round(_MIN_SURFACE + (1.0 - noise) * (_MAX_SURFACE - _MIN_SURFACE)),
+            _MIN_SURFACE,
+            _MAX_SURFACE,
+        ).astype(np.int32)
 
-        for octave in range(3):
-            frequency = 2.0 ** octave
-            amplitude = 0.5 ** octave
-            value_base = self._perlin_noise_vectorized(
-                xx * frequency, yy * frequency, amplitude
-            )
-            if octave == 0:
-                values = value_base
-            else:
-                values += value_base
+        rows = np.arange(dimensions.height)
+        pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
+        foam_mix = (np.sin(t * 3.0) + 1.0) / 2.0
 
-        values = np.clip(values, 0, 1) * 255
+        for x in range(dimensions.width):
+            surface_row = int(surface[x])
+            column = np.empty((dimensions.height, 3), dtype=np.int32)
 
-        pixels[:, :, 0] = np.clip(values * 0.3, 0, 255).astype(np.int32)
-        pixels[:, :, 1] = np.clip(values * 0.6, 0, 255).astype(np.int32)
-        pixels[:, :, 2] = np.clip(values, 0, 255).astype(np.int32)
+            # Ground (grass/sand/stone/...) always starts at `surface_row`
+            # and runs to the bottom of the display; water, when present,
+            # sits on top of it between sea level and the surface - so a
+            # dip below sea level floods gradually instead of the column
+            # instantly swapping from solid ground to open water.
+            sky_end = min(surface_row, _SEA_LEVEL)
+            sky_rows = rows < sky_end
+            sky_t = rows[sky_rows] / max(1, _SEA_LEVEL - 1)
+            column[sky_rows] = _lerp_rows(_SKY_TOP, _SKY_HORIZON, sky_t)
+
+            water_rows = (rows >= _SEA_LEVEL) & (rows < surface_row)
+            if np.any(water_rows):
+                depth_t = (rows[water_rows] - _SEA_LEVEL) / max(
+                    1, _MAX_SURFACE - _SEA_LEVEL
+                )
+                water = _lerp_rows(_SHALLOW_WATER, _DEEP_WATER, depth_t)
+                water[0] = _lerp_rows(_FOAM, _SHALLOW_WATER, np.array([foam_mix]))[0]
+                column[water_rows] = water
+
+            ground_rows = rows >= surface_row
+            top_color = _ground_top_color(surface_row)
+            depth_below = rows[ground_rows] - surface_row
+            column[ground_rows] = _land_column(depth_below, top_color)
+
+            pixels[:, x, :] = column
 
         return pixels
-
-    def _perlin_noise_vectorized(self, x: np.ndarray, y: np.ndarray, amplitude: float) -> np.ndarray:
-        xi = np.floor(x).astype(int)
-        yi = np.floor(y).astype(int)
-        xf = x - xi
-        yf = y - yi
-
-        n00 = self._perlin_hash(xi, yi)
-        n10 = self._perlin_hash(xi + 1, yi)
-        n01 = self._perlin_hash(xi, yi + 1)
-        n11 = self._perlin_hash(xi + 1, yi + 1)
-
-        smooth_xf = xf * xf * (3.0 - 2.0 * xf)
-        smooth_yf = yf * yf * (3.0 - 2.0 * yf)
-
-        nx0 = n00 + (n10 - n00) * smooth_xf
-        nx1 = n01 + (n11 - n01) * smooth_xf
-        result = nx0 + (nx1 - nx0) * smooth_yf
-
-        return result * amplitude

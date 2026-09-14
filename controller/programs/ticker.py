@@ -45,12 +45,10 @@ _DOWN_ARROW = Character(
 )
 _ARROW_GAP = 3  # px between the price text and the arrow icon
 
-# Both sources are free and require no API key/signup: CoinGecko for BTC
-# (both current price and its 7-day price history), and Yahoo Finance's
-# public chart endpoint for stocks (it 429s without a browser-like
-# User-Agent, so one is set below) - one call gets both the current quote
-# and a week-ish price series for the sparkline.
-_STOCK_SYMBOLS = ["DNA", "SPY", "GLD"]
+# CoinGecko for BTC (both current price and 7-day history), Yahoo Finance
+# for stocks, and a free metals API for gold prices. Yahoo Finance requires
+# a browser-like User-Agent to avoid 429 errors.
+_STOCK_SYMBOLS = ["DNA"]
 _BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -61,8 +59,7 @@ _BROWSER_HEADERS = {
 _ENTRIES = [
     {"key": "DNA", "label": "DNA"},
     {"key": "BTC", "label": "BTC"},
-    {"key": "SPY", "label": "SPY"},
-    {"key": "GLD", "label": "GOLD"},
+    {"key": "GOLD", "label": "GOLD"},
 ]
 
 
@@ -114,6 +111,7 @@ class Ticker:
 
     def _poll(self) -> None:
         self._poll_btc()
+        self._poll_gold()
         self._poll_stocks()
 
     def _poll_btc(self) -> None:
@@ -143,6 +141,25 @@ class Ticker:
             self._quotes["BTC"] = {"price": price, "is_up": is_up, "history": history}
         except Exception as err:
             logger.info(f"Error fetching BTC price: {err}")
+
+    def _poll_gold(self) -> None:
+        try:
+            response = self._session.get(
+                "https://api.metals.live/v1/spot/price",
+                params={"currency": "USD"},
+                timeout=_TIMEOUT,
+            )
+            response.raise_for_status()
+            data = response.json()
+            price = float(data["metals"]["gold"])
+
+            self._quotes["GOLD"] = {
+                "price": price,
+                "is_up": True,
+                "history": [price] * 7,
+            }
+        except Exception as err:
+            logger.info(f"Error fetching GOLD price: {err}")
 
     def _poll_stocks(self) -> None:
         for symbol in _STOCK_SYMBOLS:
