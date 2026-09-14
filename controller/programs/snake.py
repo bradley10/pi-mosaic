@@ -119,10 +119,12 @@ class Snake:
 
         self._pixels = self._BG.copy()
 
-        # Path caching to reduce BFS calls
+        # Path caching to reduce BFS calls - cache MUCH more aggressively
+        # BFS can take 7+ seconds on complex boards, so we cache for 10+ frames
         self._cached_path = []
         self._cached_apple_pos = None
         self._path_recalc_counter = 0
+        self._recalc_interval = 10  # Recalculate only every 10 frames (~500ms)
 
     @property
     def pixels(self) -> PixelDisplay:
@@ -539,12 +541,13 @@ class Snake:
                 return self.get_path_to_tail()
 
     def set_path(self):
-        # Recalculate path only every 3 frames or when apple moves/position changes
+        # Recalculate path only every 10 frames or when apple moves/position changes
+        # BFS can spike to 7+ seconds on complex boards - aggressive caching essential
         self._path_recalc_counter += 1
         apple_moved = tuple(self.apple.pos) != self._cached_apple_pos
         path_consumed = len(self._cached_path) == 0
 
-        if self._path_recalc_counter < 3 and not apple_moved and not path_consumed:
+        if self._path_recalc_counter < self._recalc_interval and not apple_moved and not path_consumed:
             return self._cached_path
 
         self._path_recalc_counter = 0
