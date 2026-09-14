@@ -1,5 +1,6 @@
 import datetime
 import logging
+import math
 import time
 
 import numpy as np
@@ -137,6 +138,7 @@ class Clock:
         self._session.mount("https://", adapter)
 
         self._forecast = {}
+        self._frame_counter = 0  # For smooth pulsing (frame-based, not time-based)
 
     @property
     def pixels(self) -> PixelDisplay:
@@ -243,6 +245,7 @@ class Clock:
         run_periodically(self._tick, interval=0.03)
 
     def _tick(self) -> None:
+        self._frame_counter += 1
         self._pixels = self._clock_pixels()
 
     def _clock_pixels(self) -> PixelDisplay:
@@ -286,7 +289,10 @@ class Clock:
 
         # Breathing dot in the corner ticks once every 2 seconds, so
         # something on screen always animates even between minute changes.
-        tick = int(255 * pulse(time.time(), period=2.0))
+        # Use frame counter (not time.time()) to avoid wall-clock jitter
+        pulse_period_frames = int(2.0 / 0.03)  # 2 seconds / 30ms per frame = 67 frames
+        pulse_phase = (self._frame_counter % pulse_period_frames) / pulse_period_frames
+        tick = int(255 * (math.sin(2 * math.pi * pulse_phase) + 1) / 2)
         pixels[dimensions.height - 1][0] = (tick, tick, tick)
 
         draw_lines_on(pixels, lines)
