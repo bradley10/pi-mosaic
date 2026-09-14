@@ -10,15 +10,15 @@ class Ball:
     _BG = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
 
     def __init__(self):
-        self.ball_frequency_hz = 33
+        self.ball_frequency_hz = 20
 
         # ball_width:ball_height ratio must not be the same as width:height,
         # otherwise the animation will repeat every 1-4 loops
         self.ball_width = 4
         self.ball_height = 4
 
-        self.ball_dx = 0.3
-        self.ball_dy = 0.3
+        self.ball_dx = 1
+        self.ball_dy = 1
 
         self.ball_x_position = dimensions.width // 2 - self.ball_width
         self.ball_y_position = dimensions.height // 2 - self.ball_height

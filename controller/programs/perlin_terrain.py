@@ -10,100 +10,81 @@ from controller.timing import spawn_daemon
 
 Color = Tuple[int, int, int]
 
-_SCALE = 16.0  # smaller = more hills/valleys visible across the width
-_SPEED = 0.55  # noise-units/sec scrolled, i.e. how fast the world goes by
+_SCALE = 12.0
+_SPEED = 1.2
 _OCTAVES = 4
 
-# Row bands (0 = top of the display). Land rises toward `_MIN_SURFACE` and
-# the sea floor deepens toward `_MAX_SURFACE`; anything below `_SEA_LEVEL` is
-# underwater. Kept close to the bottom of the display (rather than spanning
-# its full height) so most of a hill's visible cross-section is its thin
-# topsoil layer, not the stone underneath - and there's always plenty of
-# sky above it.
-_SEA_LEVEL = 22
-_MIN_SURFACE = 15
-_MAX_SURFACE = 28
-
-_SKY_TOP: Color = (70, 140, 220)
-_SKY_HORIZON: Color = (185, 225, 248)
-_SHALLOW_WATER: Color = (60, 150, 210)
-_DEEP_WATER: Color = (10, 35, 110)
-_FOAM: Color = (225, 240, 250)
-_SAND: Color = (225, 195, 130)
-_GRASS: Color = (70, 165, 70)
-_FOREST: Color = (35, 110, 50)
-_DIRT: Color = (110, 75, 48)
-_STONE: Color = (125, 125, 130)
-_SNOW: Color = (245, 246, 250)
+_DEEP_WATER: Color = (15, 40, 100)
+_WATER: Color = (30, 100, 180)
+_SHALLOW_WATER: Color = (80, 150, 200)
+_SAND: Color = (210, 190, 120)
+_GRASS: Color = (60, 160, 70)
+_FOREST: Color = (35, 100, 45)
+_HILLS: Color = (150, 120, 80)
+_MOUNTAINS: Color = (130, 130, 140)
+_SNOW: Color = (240, 245, 250)
 
 
-def _lerp_rows(c1: Color, c2: Color, t: np.ndarray) -> np.ndarray:
-    """Lerp between two colors across an array of `t` in [0, 1]; returns an
-    (n, 3) int array, one row per `t`."""
-    t = np.clip(t, 0.0, 1.0)[:, None]
-    return (np.array(c1) + (np.array(c2) - np.array(c1)) * t).astype(np.int32)
-
-
-def _hash(x: np.ndarray) -> np.ndarray:
-    n = np.sin(x * 127.1) * 43758.5453
+def _hash2d(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """2D hash function for Perlin noise."""
+    n = np.sin(x * 12.9898 + y * 78.233) * 43758.5453
     return n - np.floor(n)
 
 
-def _noise_1d(x: np.ndarray) -> np.ndarray:
-    xi = np.floor(x)
+def _noise2d(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """2D Perlin noise."""
+    xi = np.floor(x).astype(int)
+    yi = np.floor(y).astype(int)
     xf = x - xi
-    n0 = _hash(xi)
-    n1 = _hash(xi + 1)
-    smooth_t = xf * xf * (3.0 - 2.0 * xf)
-    return n0 + (n1 - n0) * smooth_t
+    yf = y - yi
+
+    n00 = _hash2d(xi, yi)
+    n10 = _hash2d(xi + 1, yi)
+    n01 = _hash2d(xi, yi + 1)
+    n11 = _hash2d(xi + 1, yi + 1)
+
+    smooth_x = xf * xf * (3.0 - 2.0 * xf)
+    smooth_y = yf * yf * (3.0 - 2.0 * yf)
+
+    nx0 = n00 + (n10 - n00) * smooth_x
+    nx1 = n01 + (n11 - n01) * smooth_x
+    return nx0 + (nx1 - nx0) * smooth_y
 
 
-def _fbm_1d(x: np.ndarray, octaves: int = _OCTAVES) -> np.ndarray:
+def _fbm2d(x: np.ndarray, y: np.ndarray, octaves: int = _OCTAVES) -> np.ndarray:
+    """Fractal Brownian Motion in 2D."""
     value = np.zeros_like(x)
     amplitude = 1.0
     frequency = 1.0
     max_value = 0.0
     for _ in range(octaves):
-        value = value + amplitude * _noise_1d(x * frequency)
+        value += amplitude * _noise2d(x * frequency, y * frequency)
         max_value += amplitude
         amplitude *= 0.5
         frequency *= 2.0
     return value / max_value
 
 
-def _ground_top_color(surface_row: int) -> Color:
-    """The surface block color at `surface_row` - lower rows are taller, so
-    this shades from snowy peaks down through forest and grass to beach
-    sand, then to a sandy/rocky seabed once the ground dips underwater."""
-    if surface_row > _SEA_LEVEL:
-        return _SAND if surface_row - _SEA_LEVEL <= 3 else _STONE
-    if surface_row <= _MIN_SURFACE:
-        return _SNOW
-    if surface_row <= _MIN_SURFACE + 2:
-        return _STONE
-    if surface_row <= _SEA_LEVEL - 3:
-        return _FOREST
-    if surface_row <= _SEA_LEVEL - 1:
+def _terrain_color(height: float) -> Color:
+    """Map height value [0, 1] to terrain color (Google Maps style top-down)."""
+    if height < 0.2:
+        return _DEEP_WATER
+    elif height < 0.35:
+        return _WATER
+    elif height < 0.45:
+        return _SHALLOW_WATER
+    elif height < 0.5:
+        return _SAND
+    elif height < 0.6:
         return _GRASS
-    return _SAND
-
-
-def _land_column(depth_below_surface: np.ndarray, top_color: Color) -> np.ndarray:
-    """Below-surface fill for one land column: a thin topsoil layer over
-    dirt over stone, mountains/beaches staying a uniform material."""
-    if top_color == _SAND:
-        return np.tile(np.array(_SAND), (len(depth_below_surface), 1))
-
-    if top_color in (_SNOW, _STONE):
-        is_cap = depth_below_surface == 0
-        return np.where(is_cap[:, None], np.array(top_color), np.array(_STONE))
-
-    is_top = depth_below_surface == 0
-    is_dirt = (depth_below_surface > 0) & (depth_below_surface <= 5)
-    fill = np.broadcast_to(np.array(_STONE), (len(depth_below_surface), 3)).copy()
-    fill[is_dirt] = _DIRT
-    fill[is_top] = top_color
-    return fill
+    elif height < 0.7:
+        return _FOREST
+    elif height < 0.8:
+        return _HILLS
+    elif height < 0.9:
+        return _MOUNTAINS
+    else:
+        return _SNOW
 
 
 class PerlinTerrain:
@@ -126,48 +107,23 @@ class PerlinTerrain:
             time.sleep(0.03)
 
     def _render(self) -> PixelDisplay:
+        """Render top-down view of terrain (Google Maps style)."""
         t = time.monotonic() - self._start_time
+
         x_coords = np.arange(dimensions.width) / _SCALE + t * _SPEED
+        y_coords = np.arange(dimensions.height) / _SCALE
 
-        noise = _fbm_1d(x_coords)
-        surface = np.clip(
-            np.round(_MIN_SURFACE + (1.0 - noise) * (_MAX_SURFACE - _MIN_SURFACE)),
-            _MIN_SURFACE,
-            _MAX_SURFACE,
-        ).astype(np.int32)
+        xx, yy = np.meshgrid(x_coords, y_coords)
 
-        rows = np.arange(dimensions.height)
+        noise = _fbm2d(xx, yy, octaves=4)
+        noise = np.clip(noise, 0.0, 1.0)
+
         pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
-        foam_mix = (np.sin(t * 3.0) + 1.0) / 2.0
 
-        for x in range(dimensions.width):
-            surface_row = int(surface[x])
-            column = np.empty((dimensions.height, 3), dtype=np.int32)
-
-            # Ground (grass/sand/stone/...) always starts at `surface_row`
-            # and runs to the bottom of the display; water, when present,
-            # sits on top of it between sea level and the surface - so a
-            # dip below sea level floods gradually instead of the column
-            # instantly swapping from solid ground to open water.
-            sky_end = min(surface_row, _SEA_LEVEL)
-            sky_rows = rows < sky_end
-            sky_t = rows[sky_rows] / max(1, _SEA_LEVEL - 1)
-            column[sky_rows] = _lerp_rows(_SKY_TOP, _SKY_HORIZON, sky_t)
-
-            water_rows = (rows >= _SEA_LEVEL) & (rows < surface_row)
-            if np.any(water_rows):
-                depth_t = (rows[water_rows] - _SEA_LEVEL) / max(
-                    1, _MAX_SURFACE - _SEA_LEVEL
-                )
-                water = _lerp_rows(_SHALLOW_WATER, _DEEP_WATER, depth_t)
-                water[0] = _lerp_rows(_FOAM, _SHALLOW_WATER, np.array([foam_mix]))[0]
-                column[water_rows] = water
-
-            ground_rows = rows >= surface_row
-            top_color = _ground_top_color(surface_row)
-            depth_below = rows[ground_rows] - surface_row
-            column[ground_rows] = _land_column(depth_below, top_color)
-
-            pixels[:, x, :] = column
+        for y in range(dimensions.height):
+            for x in range(dimensions.width):
+                height = noise[y, x]
+                color = _terrain_color(height)
+                pixels[y, x] = color
 
         return pixels

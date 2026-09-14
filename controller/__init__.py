@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import threading
 import time
 
 import numpy as np
@@ -29,28 +28,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class ThreadSafeProgram:
-    """Wraps a program to provide thread-safe pixel access via a lock.
-
-    This ensures the main loop reads a complete frame without the program
-    thread modifying pixels mid-read. We avoid expensive array copies by
-    using a lock for just the read operation.
-    """
-
-    def __init__(self, program):
-        self._program = program
-        self._lock = threading.Lock()
-
-    def __getattr__(self, name):
-        return getattr(self._program, name)
-
-    @property
-    def pixels(self):
-        with self._lock:
-            return self._program.pixels
-
-    def start(self):
-        self._program.start()
 
 
 class Controller:
@@ -86,7 +63,7 @@ class Controller:
         self._main_loop()
 
     def _main_loop(self):
-        raw_programs = [
+        programs = [
             self.clock,
             self.ball,
             self.snake,
@@ -98,7 +75,6 @@ class Controller:
             self.tetris,
             *self.paintings,
         ]
-        programs = [ThreadSafeProgram(p) for p in raw_programs]
         for program in programs:
             program.start()
 
@@ -132,11 +108,11 @@ class Controller:
                 self._program = selected
                 logger.info(f"Switched program to index {self._program} (selected)")
 
-            # Update display every frame (33 FPS) without change detection.
-            # Checking array equality is expensive (~1ms) and unnecessary -
-            # the hardware can handle constant updates. This eliminates micro-stalls.
-            pixels = programs[self._program].pixels
-            self.display.display_matrix(pixels=pixels)
+            # Update the display only if pixels change.
+            new_pixels = programs[self._program].pixels
+            if pixels is None or not np.array_equal(pixels, new_pixels):
+                pixels = new_pixels
+                self.display.display_matrix(pixels=pixels)
 
             # The simulator's gallery view wants every program's frame at
             # once; real hardware only ever shows the one active program.
@@ -148,4 +124,4 @@ class Controller:
                     ]
                 )
 
-            time.sleep(0.03)
+            time.sleep(0.01)
