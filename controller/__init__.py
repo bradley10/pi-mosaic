@@ -108,11 +108,11 @@ class Controller:
                 self._program = selected
                 logger.info(f"Switched program to index {self._program} (selected)")
 
-            # Update the display only if pixels change.
-            new_pixels = programs[self._program].pixels
-            if pixels is None or not np.array_equal(pixels, new_pixels):
-                pixels = new_pixels
-                self.display.display_matrix(pixels=pixels)
+            # Always update display - checking for changes with array_equal is
+            # expensive (~1ms) and causes frame stalls. Hardware can handle
+            # constant updates and it's much smoother this way.
+            pixels = programs[self._program].pixels
+            self.display.display_matrix(pixels=pixels)
 
             # The simulator's gallery view wants every program's frame at
             # once; real hardware only ever shows the one active program.
@@ -124,4 +124,4 @@ class Controller:
                     ]
                 )
 
-            time.sleep(0.01)
+            time.sleep(0.016)
