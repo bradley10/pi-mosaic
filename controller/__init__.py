@@ -14,7 +14,9 @@ from controller.programs.gallery import create_paintings
 from controller.programs.lava_lamp import LavaLamp
 from controller.programs.metaballs import Metaballs
 from controller.programs.moon import Moon
+from controller.programs.perlin_terrain import PerlinTerrain
 from controller.programs.snake import Snake
+from controller.programs.tetris import Tetris
 from controller.programs.ticker import Ticker
 
 # Configure logging
@@ -39,6 +41,8 @@ class Controller:
         self.metaballs = Metaballs()
         self.lava_lamp = LavaLamp()
         self.ticker = Ticker()
+        self.perlin_terrain = PerlinTerrain()
+        self.tetris = Tetris()
         # Reads .npy asset files from disk, so must be constructed before
         # Dual/AdaFruit below - see the privilege-drop note there.
         self.paintings = create_paintings()
@@ -65,6 +69,8 @@ class Controller:
             self.metaballs,
             self.lava_lamp,
             self.ticker,
+            self.perlin_terrain,
+            self.tetris,
             *self.paintings,
         ]
         for program in programs:
