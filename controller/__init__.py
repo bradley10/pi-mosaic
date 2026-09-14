@@ -30,12 +30,16 @@ logger = logging.getLogger(__name__)
 
 
 class ThreadSafeProgram:
-    """Wraps a program to provide thread-safe pixel access via a lock."""
+    """Wraps a program to provide thread-safe pixel access via a lock.
+
+    This ensures the main loop reads a complete frame without the program
+    thread modifying pixels mid-read. We avoid expensive array copies by
+    using a lock for just the read operation.
+    """
 
     def __init__(self, program):
         self._program = program
         self._lock = threading.Lock()
-        self._last_pixels = None
 
     def __getattr__(self, name):
         return getattr(self._program, name)
@@ -43,7 +47,7 @@ class ThreadSafeProgram:
     @property
     def pixels(self):
         with self._lock:
-            return self._program.pixels.copy()
+            return self._program.pixels
 
     def start(self):
         self._program.start()
@@ -128,12 +132,11 @@ class Controller:
                 self._program = selected
                 logger.info(f"Switched program to index {self._program} (selected)")
 
-            # Poll at 33 FPS instead of 200 FPS to reduce overhead and sync with
-            # most programs' 30ms frame intervals. Thread-safe copy prevents tearing.
-            new_pixels = programs[self._program].pixels
-            if pixels is None or not np.array_equal(pixels, new_pixels):
-                pixels = new_pixels
-                self.display.display_matrix(pixels=pixels)
+            # Update display every frame (33 FPS) without change detection.
+            # Checking array equality is expensive (~1ms) and unnecessary -
+            # the hardware can handle constant updates. This eliminates micro-stalls.
+            pixels = programs[self._program].pixels
+            self.display.display_matrix(pixels=pixels)
 
             # The simulator's gallery view wants every program's frame at
             # once; real hardware only ever shows the one active program.

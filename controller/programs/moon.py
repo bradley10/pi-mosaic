@@ -45,7 +45,7 @@ class Moon:
     def _main_loop(self):
         while True:
             self._pixels = self._moon_pixels()
-            time.sleep(0.1)
+            time.sleep(0.03)
 
     def _moon_pixels(self) -> PixelDisplay:
         t = time.monotonic() - self._start_time
