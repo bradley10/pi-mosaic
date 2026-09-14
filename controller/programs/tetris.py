@@ -61,10 +61,11 @@ PIECE_ROTATIONS = {name: _all_rotations(shape) for name, shape in PIECE_SHAPES.i
 
 # Autoplay heuristic weights: pick the (rotation, column) landing that clears
 # the most lines while keeping the stack low, hole-free, and even.
-_W_HEIGHT = 1.0
-_W_HOLES = 6.0
-_W_BUMPINESS = 0.8
-_W_LINES = 6.0
+# Higher weights = more aggressive about that factor.
+_W_HEIGHT = 1.5
+_W_HOLES = 8.0
+_W_BUMPINESS = 1.2
+_W_LINES = 10.0
 
 # The piece first slides to its target column (no falling yet), then falls
 # straight down once aligned - so it only ever makes exactly the moves it
@@ -348,10 +349,6 @@ class Tetris:
 
     @staticmethod
     def _draw_block(pixels: PixelDisplay, grid_x: int, grid_y: int, color) -> None:
-        """Fill one cell, with a darker bottom/right edge for a beveled,
-        blocky look instead of a flat color square."""
+        """Fill one cell with solid color."""
         px, py = grid_x * BLOCK_SIZE, grid_y * BLOCK_SIZE
         pixels[py : py + BLOCK_SIZE, px : px + BLOCK_SIZE] = color
-        shade = tuple(max(0, c - 60) for c in color)
-        pixels[py + BLOCK_SIZE - 1, px : px + BLOCK_SIZE] = shade
-        pixels[py : py + BLOCK_SIZE, px + BLOCK_SIZE - 1] = shade
