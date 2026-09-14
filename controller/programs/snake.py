@@ -119,6 +119,11 @@ class Snake:
 
         self._pixels = self._BG.copy()
 
+        # Path caching to reduce BFS calls
+        self._cached_path = []
+        self._cached_apple_pos = None
+        self._path_recalc_counter = 0
+
     @property
     def pixels(self) -> PixelDisplay:
         return self._pixels
@@ -534,13 +539,26 @@ class Snake:
                 return self.get_path_to_tail()
 
     def set_path(self):
+        # Recalculate path only every 3 frames or when apple moves/position changes
+        self._path_recalc_counter += 1
+        apple_moved = tuple(self.apple.pos) != self._cached_apple_pos
+        path_consumed = len(self._cached_path) == 0
+
+        if self._path_recalc_counter < 3 and not apple_moved and not path_consumed:
+            return self._cached_path
+
+        self._path_recalc_counter = 0
+        self._cached_apple_pos = tuple(self.apple.pos)
+
+        # Win condition - apple right next to head
         if self.score == SNAKE_MAX_LENGTH - 1 and self.apple.pos in get_neighbors(
             self.head.pos
         ):
-            winning_path = [tuple(self.apple.pos)]
+            self._cached_path = [tuple(self.apple.pos)]
             logger.info("Snake is about to win..")
-            return winning_path
+            return self._cached_path
 
+        # Try to reach apple, then get back to tail without hitting self
         v_snake = self.create_virtual_snake()
         path_1 = v_snake.bfs(tuple(v_snake.head.pos), tuple(v_snake.apple.pos))
         path_2 = []
@@ -554,25 +572,23 @@ class Snake:
             path_2 = v_snake.get_path_to_tail()
 
         if path_2:
+            self._cached_path = path_1
             return path_1
 
-        longest_path = self.longest_path_to_tail()
-        if (
-            longest_path
-            and self.score % 2 == 0
-            and self.moves_without_eating < MAX_MOVES_WITHOUT_EATING / 2
-        ):
-            return longest_path
-
+        # Only compute expensive fallback moves if above failed
         safe_move = self.any_safe_move()
         if safe_move:
+            self._cached_path = safe_move
             return safe_move
 
         path_to_tail = self.get_path_to_tail()
         if path_to_tail:
+            self._cached_path = path_to_tail
             return path_to_tail
 
         logger.info("No available path, snake in danger!")
+        self._cached_path = []
+        return []
 
     def update(self):
         path = self.set_path()
