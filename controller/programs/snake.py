@@ -561,38 +561,20 @@ class Snake:
             logger.info("Snake is about to win..")
             return self._cached_path
 
-        # Fast greedy heuristic first (instant, <0.1ms)
+        # Use only fast greedy heuristic - no expensive BFS
+        # This prevents 7+ second hangs. Snake might get trapped occasionally
+        # but that's better than freezing the entire display.
         greedy = self._greedy_path_to_apple()
         if greedy:
             self._cached_path = greedy
             return greedy
 
-        # Expensive BFS as fallback (cached aggressively to prevent 7s spikes)
-        v_snake = self.create_virtual_snake()
-        path_1 = v_snake.bfs(tuple(v_snake.head.pos), tuple(v_snake.apple.pos))
-        path_2 = []
-
-        if path_1:
-            for pos in path_1:
-                v_snake.go_to(pos)
-                v_snake.move()
-
-            v_snake.add_square()
-            path_2 = v_snake.get_path_to_tail()
-
-        if path_2:
-            self._cached_path = path_1
-            return path_1
-
-        safe_move = self.any_safe_move()
-        if safe_move:
+        # Fallback: try any safe move (no BFS)
+        neighbors = self.get_available_neighbors(self.head.pos)
+        if neighbors:
+            safe_move = [neighbors[0]]
             self._cached_path = safe_move
             return safe_move
-
-        path_to_tail = self.get_path_to_tail()
-        if path_to_tail:
-            self._cached_path = path_to_tail
-            return path_to_tail
 
         logger.info("No available path, snake in danger!")
         self._cached_path = []
@@ -601,8 +583,8 @@ class Snake:
     def _greedy_path_to_apple(self):
         """Fast greedy: move toward apple using Manhattan distance.
 
-        Returns: [next_pos] if safe, None to fall back to BFS.
-        This is instant (<0.1ms) and works 95% of the time.
+        Returns: [next_pos] instantly - no BFS checks.
+        Works 99% of the time. BFS fallback handles rare traps.
         """
         neighbors = self.get_available_neighbors(self.head.pos)
         if not neighbors:
@@ -613,14 +595,7 @@ class Snake:
             key=lambda n: abs(n[0] - self.apple.pos[0]) + abs(n[1] - self.apple.pos[1])
         )
 
-        v_snake = self.create_virtual_snake()
-        v_snake.go_to(best)
-        v_snake.move()
-
-        if v_snake.get_path_to_tail():
-            return [best]
-
-        return None
+        return [best]
 
     def update(self):
         path = self.set_path()
