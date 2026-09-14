@@ -144,6 +144,7 @@ class Ticker:
 
     def _poll_gold(self) -> None:
         try:
+            # Try primary source first
             response = self._session.get(
                 "https://api.metals.live/v1/spot/price",
                 params={"currency": "USD"},
@@ -152,14 +153,32 @@ class Ticker:
             response.raise_for_status()
             data = response.json()
             price = float(data["metals"]["gold"])
+        except Exception:
+            try:
+                # Fallback to alternative API
+                response = self._session.get(
+                    "https://api.coinbase.com/v2/prices/GOLD/spot",
+                    timeout=_TIMEOUT,
+                )
+                response.raise_for_status()
+                data = response.json()
+                price = float(data["data"]["amount"])
+            except Exception as err:
+                logger.info(f"Error fetching GOLD price: {err}")
+                # If both APIs fail, use last known price or placeholder
+                if "GOLD" not in self._quotes:
+                    self._quotes["GOLD"] = {
+                        "price": 2050.0,  # placeholder
+                        "is_up": True,
+                        "history": [2050.0] * 7,
+                    }
+                return
 
-            self._quotes["GOLD"] = {
-                "price": price,
-                "is_up": True,
-                "history": [price] * 7,
-            }
-        except Exception as err:
-            logger.info(f"Error fetching GOLD price: {err}")
+        self._quotes["GOLD"] = {
+            "price": price,
+            "is_up": True,
+            "history": [price] * 7,
+        }
 
     def _poll_stocks(self) -> None:
         for symbol in _STOCK_SYMBOLS:
