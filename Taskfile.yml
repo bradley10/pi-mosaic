@@ -1,0 +1,49 @@
+version: '3'
+
+tasks:
+  develop:
+    desc: Sync dependencies with dev and test extras
+    cmds:
+      - uv sync --extra dev --extra test
+
+  format:
+    desc: Format code with ruff
+    cmds:
+      - uv run ruff format .
+
+  lint:
+    desc: Lint code with ruff and pyright
+    cmds:
+      - uv run ruff check
+      - uv run ruff format --check .
+      - uv run pyright
+
+  test:
+    desc: Run tests with pytest
+    cmds:
+      - uv run pytest
+
+  run:
+    desc: Run the controller
+    cmds:
+      - uv run python -m controller
+
+  sim:
+    desc: Run the controller in simulate mode
+    cmds:
+      - uv run python -m controller simulate
+
+  clean:
+    desc: Clean up build artifacts and cache
+    cmds:
+      - rm -rf .venv *.egg-info .pytest_cache .coverage .ruff_cache
+      - find . -type d -name __pycache__ -exec rm -rf {} +
+
+  deploy:
+    desc: Deploy the application
+    cmds:
+      - ./deploy/deploy.sh
+
+  default:
+    cmds:
+      - task --list

@@ -40,6 +40,9 @@ _THUMB_WIDTH = 600
 _HEADERS = {"User-Agent": "mbta-tracker-led-board/1.0 (personal project)"}
 
 _OUT_DIR = Path(__file__).parent.parent / "controller" / "assets" / "paintings"
+# A small boost - LED matrices wash out subtle tonal differences a screen
+# preview doesn't, so a slightly punchier image reads better on the board.
+_CONTRAST_FACTOR = 1.4
 
 # Chosen for bold, high-contrast color masses (survives being crushed down
 # to a 64x32 matrix) and a native aspect ratio already close to 2:1 (so the
@@ -125,6 +128,7 @@ def _to_matrix_frame(raw: bytes) -> np.ndarray:
         img = img.crop((0, top, width, top + new_height))
 
     img = img.resize((dimensions.width, dimensions.height), Image.Resampling.LANCZOS)
+    img = ImageEnhance.Contrast(img).enhance(_CONTRAST_FACTOR)
 
     return np.array(img, dtype=np.int32)
 
