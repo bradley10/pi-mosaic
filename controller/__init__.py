@@ -78,45 +78,39 @@ class Controller:
         for program in programs:
             program.start()
 
-        pixels = None
-
         # Track the last seen counts from the keyboard
         last_button_a = 0
         last_button_b = 0
+        gallery_counter = 0
 
         while True:
-            # NEXT: advance one page per press, even if several presses land
-            # between loop ticks.
+            # NEXT: advance one page per press
             presses_a = self.keyboard.button_a_index - last_button_a
             if presses_a > 0:
                 last_button_a = self.keyboard.button_a_index
                 self._program = (self._program + presses_a) % len(programs)
                 logger.info(f"Switched program to index {self._program} (next)")
 
-            # BACK: same, in reverse.
+            # BACK: advance one page in reverse
             presses_b = self.keyboard.button_b_index - last_button_b
             if presses_b > 0:
                 last_button_b = self.keyboard.button_b_index
                 self._program = (self._program - presses_b) % len(programs)
                 logger.info(f"Switched program to index {self._program} (back)")
 
-            # Clicking a page directly in the web gallery view jumps
-            # straight to it.
+            # Direct selection from gallery
             take_pending_select = getattr(self.keyboard, "take_pending_select", None)
             selected = take_pending_select() if take_pending_select else None
             if selected is not None and 0 <= selected < len(programs):
                 self._program = selected
                 logger.info(f"Switched program to index {self._program} (selected)")
 
-            # Always update display - checking for changes with array_equal is
-            # expensive (~1ms) and causes frame stalls. Hardware can handle
-            # constant updates and it's much smoother this way.
-            pixels = programs[self._program].pixels
-            self.display.display_matrix(pixels=pixels)
+            # Always update display immediately - no expensive checks
+            self.display.display_matrix(pixels=programs[self._program].pixels)
 
-            # The simulator's gallery view wants every program's frame at
-            # once; real hardware only ever shows the one active program.
-            if hasattr(self.display, "display_gallery"):
+            # Gallery update only every other frame (reduce overhead)
+            gallery_counter += 1
+            if gallery_counter % 2 == 0 and hasattr(self.display, "display_gallery"):
                 self.display.display_gallery(
                     [
                         (getattr(p, "display_name", type(p).__name__), p.pixels)
