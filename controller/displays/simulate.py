@@ -43,7 +43,7 @@ _FAVICON_SVG = (
     '<rect x="18" y="5" width="9" height="9" rx="2" fill="#10b981"/>'
     '<rect x="5" y="18" width="9" height="9" rx="2" fill="#3b82f6"/>'
     '<rect x="18" y="18" width="9" height="9" rx="2" fill="#f59e0b"/>'
-    '</svg>'
+    "</svg>"
 )
 _FAVICON_BYTES = _FAVICON_SVG.encode("utf-8")
 

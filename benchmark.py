@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """Benchmark all programs to identify CPU bottlenecks on Raspberry Pi."""
 
+import statistics
 import sys
 import time
 from pathlib import Path
-from collections import defaultdict
-import statistics
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from controller.programs.clock import Clock
 from controller.programs.ball import Ball
-from controller.programs.snake import Snake
-from controller.programs.moon import Moon
-from controller.programs.metaballs import Metaballs
+from controller.programs.clock import Clock
 from controller.programs.lava_lamp import LavaLamp
-from controller.programs.ticker import Ticker
+from controller.programs.metaballs import Metaballs
+from controller.programs.moon import Moon
 from controller.programs.perlin_terrain import PerlinTerrain
+from controller.programs.snake import Snake
 from controller.programs.tetris import Tetris
+from controller.programs.ticker import Ticker
 
 BENCHMARK_DURATION = 120  # seconds
 PROGRAMS = [
@@ -32,6 +31,7 @@ PROGRAMS = [
     ("Tetris", Tetris()),
 ]
 
+
 def benchmark_program(name: str, program) -> dict:
     """Benchmark a single program's _step() function."""
     print(f"\n🔍 Benchmarking {name}...", end=" ", flush=True)
@@ -41,10 +41,13 @@ def benchmark_program(name: str, program) -> dict:
     iterations = 0
     max_iterations = 1000
 
-    while time.perf_counter() - start_time < BENCHMARK_DURATION and iterations < max_iterations:
+    while (
+        time.perf_counter() - start_time < BENCHMARK_DURATION
+        and iterations < max_iterations
+    ):
         t0 = time.perf_counter_ns()
         try:
-            if hasattr(program, '_step'):
+            if hasattr(program, "_step"):
                 program._step()
             else:
                 # For programs without _step, call through the update flow
@@ -74,16 +77,21 @@ def benchmark_program(name: str, program) -> dict:
         "p99": sorted(times)[int(len(times) * 0.99)],
     }
 
+
 def print_report(results: list):
     """Print benchmark report in a clean format."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("BENCHMARK REPORT - Raspberry Pi CPU Performance".center(80))
-    print("="*80)
-    print(f"\nTarget: <2ms per frame for smooth 60 FPS (16ms frame time)")
-    print(f"Safe: <1.5ms per frame (1.5ms / 16ms = 9.4% CPU budget)\n")
+    print("=" * 80)
+    print("\nTarget: <2ms per frame for smooth 60 FPS (16ms frame time)")
+    print("Safe: <1.5ms per frame (1.5ms / 16ms = 9.4% CPU budget)\n")
 
-    print(f"{'Program':<18} {'Avg':<8} {'Med':<8} {'Min':<8} {'Max':<8} {'P95':<8} {'StdDev':<8} {'Status':<8}")
-    print("-"*80)
+    header = (
+        f"{'Program':<18} {'Avg':<8} {'Med':<8} {'Min':<8} "
+        f"{'Max':<8} {'P95':<8} {'StdDev':<8} {'Status':<8}"
+    )
+    print(header)
+    print("-" * 80)
 
     for r in sorted(results, key=lambda x: x["avg"], reverse=True):
         avg = r["avg"]
@@ -100,9 +108,9 @@ def print_report(results: list):
             f"{status:<8}"
         )
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("KEY METRICS:")
-    print("-"*80)
+    print("-" * 80)
 
     for r in sorted(results, key=lambda x: x["avg"], reverse=True):
         if r["avg"] > 1.5:
@@ -112,26 +120,35 @@ def print_report(results: list):
             print(f"   Variability: ±{r['stdev']:.2f}ms (stdev)")
             print(f"   P99: {r['p99']:.2f}ms")
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("RECOMMENDATIONS:")
-    print("-"*80)
+    print("-" * 80)
 
     slow_programs = [r for r in results if r["avg"] > 1.5]
     if slow_programs:
         print("\n🔧 Slow Programs Detected:")
         for r in slow_programs:
             if "Snake" in r["name"]:
-                print(f"   • {r['name']}: Consider caching more aggressively (cache for 5+ frames)")
+                print(
+                    f"   • {r['name']}: Consider caching more aggressively "
+                    "(cache for 5+ frames)"
+                )
             elif "Ticker" in r["name"]:
                 print(f"   • {r['name']}: Cache API responses longer (5+ minutes)")
             elif "Metaballs" in r["name"]:
                 print(f"   • {r['name']}: Use NumPy vectorization for blob rendering")
             else:
-                print(f"   • {r['name']}: Profile with time.perf_counter() to find bottleneck")
+                print(
+                    f"   • {r['name']}: Profile with time.perf_counter() "
+                    "to find bottleneck"
+                )
     else:
-        print("✅ All programs are within acceptable performance! No optimization needed.")
+        print(
+            "✅ All programs are within acceptable performance! No optimization needed."
+        )
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
+
 
 def main():
     print("\n🚀 Starting 2-minute benchmark of all programs...")
@@ -145,6 +162,7 @@ def main():
             print(f"✓ ({result['iterations']} iterations, avg {result['avg']:.2f}ms)")
 
     print_report(results)
+
 
 if __name__ == "__main__":
     main()

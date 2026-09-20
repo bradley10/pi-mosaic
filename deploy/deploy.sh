@@ -36,6 +36,16 @@ ssh "${PI_USER}@${PI_HOST}" "
 echo "==> Installing systemd service"
 ssh "${PI_USER}@${PI_HOST}" "
   set -e
+  if systemctl is-active --quiet mbta-tracker 2>/dev/null; then
+    sudo systemctl stop mbta-tracker || true
+  fi
+  if systemctl is-enabled --quiet mbta-tracker 2>/dev/null; then
+    sudo systemctl disable mbta-tracker || true
+  fi
+  if [ -f /etc/systemd/system/mbta-tracker.service ]; then
+    sudo rm -f /etc/systemd/system/mbta-tracker.service
+  fi
+
   sudo cp ${PI_DIR}/deploy/pi-mosaic.service /etc/systemd/system/pi-mosaic.service
   sudo systemctl daemon-reload
   sudo systemctl enable pi-mosaic

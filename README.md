@@ -26,26 +26,26 @@ only way to page through programs.
 ### Installation
 Clone this repository and run:
 ```sh
-make develop
+task develop
 ```
 
 ### Running
 ```sh
 # Simulate mode: opens a browser tab with a virtual LED matrix and its
 # NEXT/BACK controls.
-make sim
+task sim
 
 # Real hardware mode: drives an actual RGB LED matrix via rpi-rgb-led-matrix,
 # and also mirrors it to a web UI. Only works on a Raspberry Pi set up per
 # setup.sh.
-make run
+task run
 ```
 
 ### Development
 ```sh
-make lint   # ruff check + pyright
-make format # ruff format
-make test   # pytest
+task lint   # ruff check + pyright
+task format # ruff format
+task test   # pytest
 ```
 
 ## The web page
@@ -226,7 +226,7 @@ sudo journalctl -u pi-mosaic --since "1 hour ago"
 
 ### Deploying code changes
 ```sh
-make deploy
+task deploy
 # or directly:
 ./deploy/deploy.sh [pi-host]   # defaults to $PI_HOST or "raspberrypi"
 ```

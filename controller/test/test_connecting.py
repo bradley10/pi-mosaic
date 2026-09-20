@@ -1,6 +1,6 @@
 """Covers the screen that holds the board until the clock can be trusted.
 
-The controller starts before DHCP finishes (see `deploy/mbta-tracker.service`),
+The controller starts before DHCP finishes (see `deploy/pi-mosaic.service`),
 so without this the Clock page would spend its first seconds showing whatever
 time fake-hwclock restored from the last shutdown."""
 
@@ -65,7 +65,7 @@ def test_starts_not_ready_when_offline(offline):
 
 
 def test_becomes_ready_once_the_clock_syncs(monkeypatch, offline):
-    screen = Connecting()
+    screen = Connecting(hold_duration=0.0)
     screen._check()
     assert not screen.ready
 
@@ -77,13 +77,27 @@ def test_becomes_ready_once_the_clock_syncs(monkeypatch, offline):
 def test_ready_latches_so_a_later_dropout_never_returns_to_this_screen(
     monkeypatch, offline
 ):
-    screen = Connecting()
+    screen = Connecting(hold_duration=0.0)
     monkeypatch.setattr(connecting_module, "clock_is_synchronized", lambda: True)
     screen._check()
     assert screen.ready
 
     # Network drops again - the board must stay on the rotation.
     monkeypatch.setattr(connecting_module, "clock_is_synchronized", lambda: False)
+    screen._check()
+    assert screen.ready
+
+
+def test_shows_connected_state_during_hold_before_ready(monkeypatch, offline):
+    screen = Connecting(hold_duration=1.0, ssid="frogandtoad")
+    monkeypatch.setattr(connecting_module, "clock_is_synchronized", lambda: True)
+    screen._check()
+    # Entered connected hold phase, but not yet ready to transition to clock
+    assert screen.connected
+    assert not screen.ready
+
+    # Advance beyond hold duration
+    screen._connected_at = time.monotonic() - 1.5
     screen._check()
     assert screen.ready
 
@@ -99,35 +113,46 @@ def test_gives_up_waiting_rather_than_holding_the_board_forever(offline):
 
 
 def test_frame_is_the_right_shape_and_dtype():
-    frame = Connecting()._render(0)
+    frame = Connecting()._render(0.0)
     assert frame.shape == (dimensions.height, dimensions.width, 3)
     assert frame.dtype == np.int32
 
 
-def test_text_and_dots_stay_on_the_panel():
-    for frame_number in range(0, 40):
-        frame = Connecting()._render(frame_number)
+def test_frame_pixels_stay_on_the_panel():
+    screen = Connecting(ssid="frogandtoad")
+    for t in [0.0, 0.5, 1.0, 1.5, 2.0]:
+        frame = screen._render(t)
         assert frame.max() <= 255
         assert frame.min() >= 0
 
 
-def test_dots_cycle_and_reset():
+def test_icon_breathes_during_connecting():
     screen = Connecting()
-    # One dot lights every 8 frames, then it starts over.
-    counts = [int((screen._render(f * 8).sum(axis=2) > 0).sum()) for f in range(5)]
-    assert counts[0] < counts[1] < counts[2] < counts[3]
-    assert counts[4] == counts[0]
+    # pulse oscillates between 0 and 1; 0.45s is the peak of the 1.8s sine cycle
+    frame_a = screen._render(0.0)
+    frame_b = screen._render(0.45)
+    assert not np.array_equal(frame_a, frame_b)
+
+
+def test_long_ssid_pans_without_overflow():
+    # Long SSID wider than 64px display
+    screen = Connecting(ssid="very_long_wifi_network_name")
+    for t in [0.0, 1.0, 2.0, 3.0, 4.0]:
+        frame = screen._render(t)
+        assert frame.shape == (dimensions.height, dimensions.width, 3)
+        assert frame.max() <= 255
+        assert frame.min() >= 0
 
 
 def test_render_does_not_mutate_the_shared_background():
     before = Connecting._BG.copy()
-    Connecting()._render(24)
+    Connecting()._render(1.0)
     assert np.array_equal(Connecting._BG, before)
     assert not Connecting._BG.any()
 
 
 def test_step_stops_redrawing_once_ready(monkeypatch, offline):
-    screen = Connecting()
+    screen = Connecting(hold_duration=0.0)
     screen._step()
     frame = screen.pixels
 
@@ -143,7 +168,7 @@ def test_waits_for_weather_when_clock_provided(monkeypatch, offline):
         has_weather = False
 
     clock = FakeClock()
-    screen = Connecting(clock=clock)
+    screen = Connecting(clock=clock, hold_duration=0.0)
     monkeypatch.setattr(connecting_module, "clock_is_synchronized", lambda: True)
 
     screen._check()

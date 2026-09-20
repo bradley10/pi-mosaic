@@ -56,8 +56,8 @@ Every page implements (`controller/programs/__init__.py`):
 ```python
 class Program(Protocol):
     @property
-    def pixels(self) -> PixelDisplay: ...   # current frame, read every ~5ms
-    def start(self) -> None: ...             # kick off background thread(s)
+    def pixels(self) -> PixelDisplay: ...  # current frame, read every ~5ms
+    def start(self) -> None: ...  # kick off background thread(s)
 ```
 
 Programs are **self-driving**: `start()` spawns a daemon thread (or two -
@@ -94,9 +94,12 @@ import numpy as np
 from controller.data import PixelDisplay, dimensions
 from controller.timing import run_periodically, spawn_daemon
 
+
 class YourThing:
     def __init__(self):
-        self._pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
+        self._pixels = np.zeros(
+            (dimensions.height, dimensions.width, 3), dtype=np.int32
+        )
 
     @property
     def pixels(self) -> PixelDisplay:
@@ -266,7 +269,7 @@ If you add a program whose frame can sit unchanged, this is the trap.
   expose that.
   Exposes `button_a_index`/`button_b_index` (monotonic counters) and
   `take_pending_select()` (pops the most-recently-clicked gallery index, or
-  `None`). Used standalone for `make sim` (laptop dev, no hardware).
+  `None`). Used standalone for `task sim` (laptop dev, no hardware).
 - **`AdaFruit`**: drives the real matrix via `rpi-rgb-led-matrix`. Parses a
   large set of `--led-*` CLI flags (hardware mapping, brightness, GPIO
   slowdown, etc.) into `RGBMatrixOptions`.
@@ -409,12 +412,12 @@ to that specific interpreter - upgrading it would mean recompiling
 ## Dev workflow
 
 ```sh
-make develop   # uv sync
-make sim       # simulate mode: web UI only, no hardware needed
-make run       # real hardware mode - only works on the Pi
-make lint      # ruff check + pyright
-make format    # ruff format
-make test      # pytest
+task develop   # uv sync
+task sim       # simulate mode: web UI only, no hardware needed
+task run       # real hardware mode - only works on the Pi
+task lint      # ruff check + pyright
+task format    # ruff format
+task test      # pytest
 ```
 
 Test patterns: `controller/test/test_data.py` for pure-function stuff,
@@ -425,7 +428,7 @@ against real hardware.
 
 ## Deploying to the Pi
 
-`make deploy` (or `./deploy/deploy.sh [host]`) rsyncs the repo to
+`task deploy` (or `./deploy/deploy.sh [host]`) rsyncs the repo to
 `/home/pi/pi-mosaic` (deleting anything there that's no longer in the
 repo), installs `requirements-pi.txt` into the existing venv, and restarts
 the systemd service. See the README's "Deploying to a Raspberry Pi" section
