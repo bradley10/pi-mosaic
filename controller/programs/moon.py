@@ -6,13 +6,14 @@ import time
 import numpy as np
 
 from controller.data import PixelDisplay, dimensions, draw_lines_on
+from controller.settings import settings
 from controller.sprites import (
     MOON_PHASE_NAMES,
     MOON_PHASES,
     draw_sprite_on,
     draw_starfield,
 )
-from controller.timing import spawn_daemon
+from controller.timing import run_periodically, spawn_daemon
 
 NIGHT_BG = (0, 0, 0)
 
@@ -43,9 +44,10 @@ class Moon:
         spawn_daemon(self._main_loop)
 
     def _main_loop(self):
-        while True:
-            self._pixels = self._moon_pixels()
-            time.sleep(0.1)
+        run_periodically(self._step, interval=0.1, owner=self)
+
+    def _step(self) -> None:
+        self._pixels = self._moon_pixels()
 
     def _moon_pixels(self) -> PixelDisplay:
         t = time.monotonic() - self._start_time
@@ -68,9 +70,10 @@ class Moon:
         )
         draw_starfield(
             pixels,
-            t,
+            t * settings.get("moon.twinkle_speed"),
             exclude_center=moon_center,
             exclude_radius=sprite.width_px / 2 + 2,
+            count=settings.get("moon.stars"),
         )
 
         draw_sprite_on(pixels, sprite, row_start=row_start, col_start=col_start)

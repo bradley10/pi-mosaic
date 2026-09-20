@@ -14,6 +14,7 @@ from controller.data import (
     word_width,
 )
 from controller.http_client import make_session
+from controller.settings import settings
 from controller.timing import run_periodically, spawn_daemon
 
 logger = logging.getLogger(__name__)
@@ -45,10 +46,21 @@ _DOWN_ARROW = Character(
 )
 _ARROW_GAP = 3  # px between the price text and the arrow icon
 
-# CoinGecko for BTC (both current price and 7-day history), Yahoo Finance
-# for stocks, and a free metals API for gold prices. Yahoo Finance requires
-# a browser-like User-Agent to avoid 429 errors.
-_STOCK_SYMBOLS = ["DNA"]
+# CoinGecko for BTC (both current price and 7-day history) and Yahoo Finance
+# for everything else, as {quote key: Yahoo symbol}. Yahoo Finance requires a
+# browser-like User-Agent to avoid 429 errors.
+#
+# Gold is the front-month COMEX future rather than a spot feed. The two free
+# spot APIs this used to call are both gone - api.metals.live no longer
+# presents a usable certificate, and Coinbase never had a GOLD pair, so it
+# 400'd on every poll and the page fell back to a hardcoded $2050 that was
+# displayed as though it were real. Every remaining spot source wants an API
+# key, and Yahoo has no working spot symbol (XAUUSD=X, XAU=X and GCUSD=X are
+# all delisted). GC=F tracks spot within a few dollars, and being on the same
+# endpoint as the stocks it comes with a real previous close and a real
+# intraday series - so gold gets a true up/down arrow and a true sparkline
+# instead of the flat `[price] * 7` the old code faked.
+_YAHOO_SYMBOLS = {"DNA": "DNA", "GOLD": "GC=F"}
 _BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -107,12 +119,13 @@ class Ticker:
         spawn_daemon(self._http_loop)
 
     def _http_loop(self):
-        run_periodically(self._poll, _POLL_INTERVAL)
+        # A callable interval, so changing the refresh rate on the settings
+        # page takes effect on the next poll instead of the next restart.
+        run_periodically(self._poll, lambda: settings.get("ticker.poll_seconds"))
 
     def _poll(self) -> None:
         self._poll_btc()
-        self._poll_gold()
-        self._poll_stocks()
+        self._poll_yahoo()
 
     def _poll_btc(self) -> None:
         try:
@@ -142,46 +155,8 @@ class Ticker:
         except Exception as err:
             logger.info(f"Error fetching BTC price: {err}")
 
-    def _poll_gold(self) -> None:
-        try:
-            # Try primary source first
-            response = self._session.get(
-                "https://api.metals.live/v1/spot/price",
-                params={"currency": "USD"},
-                timeout=_TIMEOUT,
-            )
-            response.raise_for_status()
-            data = response.json()
-            price = float(data["metals"]["gold"])
-        except Exception:
-            try:
-                # Fallback to alternative API
-                response = self._session.get(
-                    "https://api.coinbase.com/v2/prices/GOLD/spot",
-                    timeout=_TIMEOUT,
-                )
-                response.raise_for_status()
-                data = response.json()
-                price = float(data["data"]["amount"])
-            except Exception as err:
-                logger.info(f"Error fetching GOLD price: {err}")
-                # If both APIs fail, use last known price or placeholder
-                if "GOLD" not in self._quotes:
-                    self._quotes["GOLD"] = {
-                        "price": 2050.0,  # placeholder
-                        "is_up": True,
-                        "history": [2050.0] * 7,
-                    }
-                return
-
-        self._quotes["GOLD"] = {
-            "price": price,
-            "is_up": True,
-            "history": [price] * 7,
-        }
-
-    def _poll_stocks(self) -> None:
-        for symbol in _STOCK_SYMBOLS:
+    def _poll_yahoo(self) -> None:
+        for key, symbol in _YAHOO_SYMBOLS.items():
             try:
                 response = self._session.get(
                     f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
@@ -197,21 +172,25 @@ class Ticker:
                 closes = result["indicators"]["quote"][0]["close"]
                 history = [float(c) for c in closes if c is not None]
 
-                self._quotes[symbol] = {
+                self._quotes[key] = {
                     "price": price,
                     "is_up": price >= prev_close,
                     "history": history,
                 }
             except Exception as err:
-                logger.info(f"Error fetching {symbol} quote: {err}")
+                # Leave the last good quote in place rather than blanking the
+                # page - a stale price beats "Loading" on a transient 429.
+                logger.info(f"Error fetching {key} quote: {err}")
 
     def _render_loop(self):
-        while True:
-            self._pixels = self._render()
-            time.sleep(0.2)
+        run_periodically(self._step, interval=0.2, owner=self)
+
+    def _step(self) -> None:
+        self._pixels = self._render()
 
     def _render(self) -> PixelDisplay:
-        entry = _ENTRIES[int(time.time() // _ROTATE_SECONDS) % len(_ENTRIES)]
+        rotate = settings.get("ticker.rotate_seconds")
+        entry = _ENTRIES[int(time.time() // rotate) % len(_ENTRIES)]
         quote = self._quotes.get(entry["key"])
 
         pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)

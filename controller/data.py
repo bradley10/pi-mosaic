@@ -233,7 +233,6 @@ def wrap_words(text: str, max_width: Optional[int] = None) -> List[str]:
     return lines
 
 
-# TODO store a map rather than searching for each letter
 def key_to_character(
     key: str,
 ) -> Character:
@@ -243,10 +242,10 @@ def key_to_character(
 
     Raise `ValueError` if the character is not found
     """
-    for character in font:
-        if character.character_key == key:
-            return character
-    raise ValueError(f"Character '{key}' not found in font")
+    try:
+        return _font_by_key[key]
+    except KeyError:
+        raise ValueError(f"Character '{key}' not found in font")
 
 
 def parse_raw_font(raw_font: dict) -> Font:
@@ -1499,6 +1498,11 @@ default_font_raw = {
 }
 
 font = parse_raw_font(default_font_raw)
+
+# Every glyph drawn goes through `key_to_character`, and `word_width` calls it
+# once per character on top of that. It used to scan the whole font list for
+# each lookup, which on the Pi is real time spent inside the render loop.
+_font_by_key = {character.character_key: character for character in font}
 
 assert word_width("a") == 5
 assert word_width("ab") == 11

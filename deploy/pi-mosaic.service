@@ -1,12 +1,23 @@
 [Unit]
-Description=MBTA Tracker LED matrix controller
-After=network-online.target
-Wants=network-online.target
+Description=Pi Mosaic LED matrix controller
+After=local-fs.target
+
+# Deliberately *not* ordered after network-online.target. Nothing at startup
+# needs the network: every program that polls an API does it from its own
+# daemon thread with retry/backoff. Waiting for it here was adding ten-plus
+# seconds of dark panel to every boot - and on a Pi that can't reach its AP,
+# the full dhcpcd/NetworkManager timeout.
+#
+# The catch is that the Pi has no RTC, so until NTP syncs, the wall clock is
+# whatever fake-hwclock restored from the last shutdown and the Clock page
+# would show a plainly wrong time. That's handled on screen rather than here:
+# `Connecting` holds the board until the clock is synchronized. See
+# README "Time to first pixel".
 
 [Service]
 Type=simple
-WorkingDirectory=/home/pi/mbta-tracker
-ExecStart=/home/pi/mbta-tracker/venv/bin/python -m controller
+WorkingDirectory=/home/pi/pi-mosaic
+ExecStart=/home/pi/pi-mosaic/venv/bin/python -m controller
 Restart=on-failure
 RestartSec=5
 User=root

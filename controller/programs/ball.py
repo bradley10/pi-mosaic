@@ -3,6 +3,7 @@ import random
 import numpy as np
 
 from controller.data import PixelDisplay, dimensions
+from controller.settings import settings
 from controller.timing import run_periodically, spawn_daemon
 
 
@@ -38,10 +39,17 @@ class Ball:
 
     def _main_loop(self):
         """Main loop for the ball program."""
-        run_periodically(self._step, 1 / self.ball_frequency_hz)
+        run_periodically(self._step, 1 / self.ball_frequency_hz, owner=self)
 
     def _step(self) -> None:
         pixels = np.zeros((dimensions.height, dimensions.width, 3), dtype=np.int32)
+
+        # Re-read the size every step so the settings page takes effect
+        # immediately. Drawing wraps with `%`, and the bounce test below is
+        # relative to the current size, so a resize mid-flight is safe.
+        self.ball_width = self.ball_height = settings.get("ball.size")
+        if not settings.get("ball.random_colors"):
+            self.ball_color = settings.get("ball.color")
 
         # move
         self.ball_x_position += self.ball_dx
@@ -60,20 +68,22 @@ class Ball:
             or self.ball_x_position >= dimensions.width - self.ball_width
         ):
             self.ball_dx *= -1
-            self.ball_color = (
-                random.randint(0, 255),
-                random.randint(0, 255),
-                random.randint(0, 255),
-            )
+            self._recolor()
         if (
             self.ball_y_position <= 0
             or self.ball_y_position >= dimensions.height - self.ball_height
         ):
             self.ball_dy *= -1
-            self.ball_color = (
-                random.randint(0, 255),
-                random.randint(0, 255),
-                random.randint(0, 255),
-            )
+            self._recolor()
 
         self._pixels = pixels
+
+    def _recolor(self) -> None:
+        if not settings.get("ball.random_colors"):
+            self.ball_color = settings.get("ball.color")
+            return
+        self.ball_color = (
+            random.randint(0, 255),
+            random.randint(0, 255),
+            random.randint(0, 255),
+        )

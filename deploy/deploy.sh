@@ -1,13 +1,13 @@
 #!/bin/sh -e
 # Deploys the working tree to the Raspberry Pi and (re)starts the
-# mbta-tracker systemd service. See README "Deploying to a Raspberry Pi".
+# pi-mosaic systemd service. See README "Deploying to a Raspberry Pi".
 #
 # Usage: ./deploy/deploy.sh [pi-host]
 #   PI_HOST env var, or the first argument, overrides the default host.
 
 PI_HOST="${1:-${PI_HOST:-raspberrypi}}"
 PI_USER=pi
-PI_DIR=/home/pi/mbta-tracker
+PI_DIR=/home/pi/pi-mosaic
 REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
 echo "==> Syncing code to ${PI_USER}@${PI_HOST}:${PI_DIR}"
@@ -36,11 +36,11 @@ ssh "${PI_USER}@${PI_HOST}" "
 echo "==> Installing systemd service"
 ssh "${PI_USER}@${PI_HOST}" "
   set -e
-  sudo cp ${PI_DIR}/deploy/mbta-tracker.service /etc/systemd/system/mbta-tracker.service
+  sudo cp ${PI_DIR}/deploy/pi-mosaic.service /etc/systemd/system/pi-mosaic.service
   sudo systemctl daemon-reload
-  sudo systemctl enable mbta-tracker
-  sudo systemctl restart mbta-tracker
+  sudo systemctl enable pi-mosaic
+  sudo systemctl restart pi-mosaic
 "
 
 echo "==> Status"
-ssh "${PI_USER}@${PI_HOST}" "sudo systemctl --no-pager status mbta-tracker"
+ssh "${PI_USER}@${PI_HOST}" "sudo systemctl --no-pager status pi-mosaic"

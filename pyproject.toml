@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mbta-tracker"
+name = "pi-mosaic"
 version = "0.1.0"
-description = "MBTA Tracker"
+description = "Pi Mosaic LED matrix controller"
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.32",

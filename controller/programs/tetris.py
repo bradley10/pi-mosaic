@@ -9,7 +9,8 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from controller.data import PixelDisplay, dimensions
-from controller.timing import spawn_daemon
+from controller.settings import settings
+from controller.timing import run_periodically, spawn_daemon
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ class Tetris:
     def __init__(self):
         self.grid = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.int32)
         self.score = 0
-        self.fall_interval = FALL_INTERVAL_START
+        self.fall_interval = settings.get("tetris.fall_seconds")
 
         self.piece: Optional[_Piece] = None
         self.target_x = 0
@@ -187,10 +188,11 @@ class Tetris:
 
     def _main_loop(self) -> None:
         self._spawn_piece()
-        while True:
-            self._step()
-            self._pixels = self._render()
-            time.sleep(TICK)
+        run_periodically(self._tick, interval=TICK, owner=self)
+
+    def _tick(self) -> None:
+        self._step()
+        self._pixels = self._render()
 
     def _step(self) -> None:
         if self.phase == "aligning":
@@ -240,7 +242,8 @@ class Tetris:
         if cleared:
             self.score += cleared
             self.fall_interval = max(
-                FALL_INTERVAL_MIN, self.fall_interval - FALL_INTERVAL_STEP * cleared
+                settings.get("tetris.min_fall_seconds"),
+                self.fall_interval - FALL_INTERVAL_STEP * cleared,
             )
 
         self._spawn_piece()
@@ -289,7 +292,7 @@ class Tetris:
             self._show_game_over()
             self.grid = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.int32)
             self.score = 0
-            self.fall_interval = FALL_INTERVAL_START
+            self.fall_interval = settings.get("tetris.fall_seconds")
             self._spawn_piece()
             return
 

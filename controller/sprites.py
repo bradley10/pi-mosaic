@@ -406,13 +406,17 @@ CHART_UP = Sprite(
 
 # --- Starfield background (shared by Moon Phase and ISS pages) -------------
 
+# Generated once at the `moon.stars` setting's maximum and sliced to the
+# configured count, so turning the count up or down adds and removes stars
+# without shuffling the ones already on screen.
+MAX_STARS = 60
 _STAR_RNG = random.Random(1234)
 STAR_POSITIONS = [
     (
         _STAR_RNG.randint(0, dimensions.height - 1),
         _STAR_RNG.randint(0, dimensions.width - 1),
     )
-    for _ in range(18)
+    for _ in range(MAX_STARS)
 ]
 
 
@@ -421,12 +425,15 @@ def draw_starfield(
     t: float,
     exclude_center: tuple | None = None,
     exclude_radius: float = 0,
+    count: int | None = None,
 ) -> PixelDisplay:
     """Draw a fixed set of stars whose brightness twinkles over time `t`
     (seconds). Pass `exclude_center`/`exclude_radius` to skip any star that
     would land too close to another element (e.g. a moon icon), so it never
-    looks like a star is touching/stuck to it."""
-    for i, (r, c) in enumerate(STAR_POSITIONS):
+    looks like a star is touching/stuck to it. `count` limits how many of
+    `STAR_POSITIONS` are drawn (default: all of them)."""
+    stars = STAR_POSITIONS if count is None else STAR_POSITIONS[: max(0, count)]
+    for i, (r, c) in enumerate(stars):
         if exclude_center is not None:
             dr, dc = r - exclude_center[0], c - exclude_center[1]
             if dr * dr + dc * dc <= exclude_radius * exclude_radius:

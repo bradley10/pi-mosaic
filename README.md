@@ -1,4 +1,4 @@
-# mbta-tracker
+# pi-mosaic
 
 ## About the project
 Controller software for a Raspberry Pi-driven RGB LED matrix display. It cycles
@@ -48,15 +48,54 @@ make format # ruff format
 make test   # pytest
 ```
 
+## The web page
+Whether you're in simulate mode or running on real hardware, the controller
+serves a page with three tabs:
+
+- **Board** — a live mirror of the matrix, plus NEXT/BACK buttons.
+- **All pages** — every page's current frame at once; click one to jump to it.
+- **Settings** — live controls for brightness, per-page speed, and each page's
+  own knobs (see below).
+
+On the Pi it's on port 80, so `http://raspberrypi/` is enough.
+
+### Settings
+Changes apply to the board as you drag the slider — nothing to restart — and
+are saved automatically a moment later. Every open tab stays in sync, so
+changing something on your phone updates the page on your laptop.
+
+Adjustable: overall brightness; a master speed multiplier and a separate one
+per page; how fast the web mirror and the all-pages view refresh; how often
+off-screen pages redraw; and per-page settings like the clock's location,
+units and breathing-dot period, the snake's colours, the ball's size and
+colour, blob counts for the metaballs and lava lamp, terrain zoom and detail,
+Tetris fall speed, and the ticker's refresh and rotation rates. "Reset all to
+defaults" puts everything back.
+
+Settings are stored as JSON **outside** the repo directory — `deploy.sh`
+rsyncs with `--delete`, so anything inside it would be wiped on every deploy.
+The location is `/var/lib/pi-mosaic/settings.json` on the Pi, and
+`~/.local/state/pi-mosaic/settings.json` on a dev machine; set
+`PI_MOSAIC_SETTINGS` to override. A missing or corrupt file just means
+defaults, never a failure to start.
+
+To add a new setting, add one `Setting(...)` to `SCHEMA` in
+`controller/settings.py` and read it where it's needed with
+`settings.get("your.key")`. The web UI, validation and persistence all come
+from that one entry.
+
 ## Project layout
 - `controller/data.py` — shared pixel/font helpers and the built-in bitmap font
+- `controller/settings.py` — the adjustable-settings schema, live store, and
+  JSON persistence
 - `controller/programs/` — the individual display programs (`Program` protocol:
   a `start()` method and a `pixels` property)
 - `controller/displays/` — the display backends: `Simulate` (web UI),
   `AdaFruit` (real hardware via `rpi-rgb-led-matrix`), and `Dual` (drives both
   at once, used on the Pi)
-- `controller/timing.py` — small helpers for running a program's loop in a
-  daemon thread at a fixed rate
+- `controller/timing.py` — running a program's loop in a daemon thread on a
+  drift-corrected schedule, plus the render gate that throttles off-screen
+  pages
 
 ## Deploying to a Raspberry Pi
 `setup.sh` bootstraps a fresh Pi (installs `rpi-rgb-led-matrix` and clones this
@@ -98,23 +137,23 @@ networking, use `sudo nmtui` or `sudo nmcli device wifi connect "SSID"
 password "PASSWORD"` instead.)
 
 ### Starting on boot (systemd)
-The controller runs as a systemd service, `deploy/mbta-tracker.service`,
-installed on the Pi at `/etc/systemd/system/mbta-tracker.service`. It runs
-`venv/bin/python -m controller` from `/home/pi/mbta-tracker`, as root (the LED
+The controller runs as a systemd service, `deploy/pi-mosaic.service`,
+installed on the Pi at `/etc/systemd/system/pi-mosaic.service`. It runs
+`venv/bin/python -m controller` from `/home/pi/pi-mosaic`, as root (the LED
 matrix driver needs raw GPIO/memory access), and restarts automatically if it
 crashes.
 
 ```sh
 # Status / start / stop / restart
-sudo systemctl status mbta-tracker
-sudo systemctl restart mbta-tracker
-sudo systemctl stop mbta-tracker      # e.g. to run it manually for testing
+sudo systemctl status pi-mosaic
+sudo systemctl restart pi-mosaic
+sudo systemctl stop pi-mosaic      # e.g. to run it manually for testing
 
 # Disable auto-start on boot (without touching the unit file)
-sudo systemctl disable mbta-tracker
+sudo systemctl disable pi-mosaic
 
 # Run it manually in the foreground, e.g. after `stop`ping the service
-cd /home/pi/mbta-tracker && ./venv/bin/python -m controller
+cd /home/pi/pi-mosaic && ./venv/bin/python -m controller
 ```
 
 `/etc/rc.local` no longer launches the controller (it used to, via a stale
@@ -122,12 +161,67 @@ cd /home/pi/mbta-tracker && ./venv/bin/python -m controller
 `controller/` — that had been silently failing on every boot). It's now a
 no-op that just prints the Pi's IP address.
 
+### Time to first pixel
+Power-on to a lit panel was ~45 seconds, essentially all of it spent before
+the controller's first frame. Measured on the Pi 4 with `journalctl -o
+short-monotonic` (seconds since the kernel started — note `systemd-analyze
+critical-chain` prints times relative to *userspace* start instead, so its
+numbers run ~2.2s lower for the same event):
+
+| | before | after |
+|---|---|---|
+| something on screen | ~45s | **~9s** |
+| `systemd-analyze` userspace | 20.9s | 16.5s |
+
+**1. The controller no longer waits for the network.** It's ordered after
+`local-fs.target`, not `network-online.target`. Nothing at startup needs the
+network — every program that polls an API does it from its own daemon thread
+with retry/backoff — so the old ordering was buying nothing and costing
+ten-plus seconds, or the full dhcpcd timeout on a Pi that can't reach its AP.
+
+**2. `Connecting` holds the board until the clock is trustworthy.** The Pi has
+no RTC, so booting before NTP means the wall clock is whatever `fake-hwclock`
+restored from the last shutdown — the Clock page would sit there showing a
+confidently wrong time. So the whole rotation stays behind a CONNECTING screen
+until `/run/systemd/timesync/synchronized` appears (with a socket probe as the
+fallback for boxes that aren't running timesyncd). It's the first thing the
+main loop puts on the display, and it **latches**: a wifi dropout an hour later
+must not throw the board back to it. If sync never comes it gives up after
+`GIVE_UP_AFTER` and shows the rotation anyway — a slightly wrong clock beats a
+board that never shows anything.
+
+**3. Unused boot services are off.** These were competing for the one SD card
+during startup; `hciuart` alone was 10.3s of Bluetooth UART setup:
+
+```sh
+sudo systemctl disable --now hciuart bluetooth e2scrub_reap \
+  rpi-eeprom-update triggerhappy triggerhappy.socket ModemManager
+sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer
+```
+
+Re-enable any with `sudo systemctl enable --now <name>`. Deliberately left
+alone: `dhcpcd`, `wpa_supplicant`, `polkit` and `tailscaled` are all still
+needed — they just no longer *block* the display — and `avahi-daemon` stays
+because mDNS is how `raspberrypi` resolves from a laptop.
+
+Python startup is not worth attacking: importing the whole `controller`
+package costs 1.25s cold and 0.67s warm on this Pi. Most of what remains is
+`RGBMatrix` hardware init plus cold reads off the SD card.
+
+To measure after a change:
+
+```sh
+systemd-analyze
+systemd-analyze blame | head -20
+journalctl -b -u pi-mosaic -o short-monotonic --no-pager
+```
+
 ### Logs
 Since it's a proper systemd service, logs go to the journal:
 ```sh
-sudo journalctl -u mbta-tracker -f        # follow live
-sudo journalctl -u mbta-tracker -b        # this boot
-sudo journalctl -u mbta-tracker --since "1 hour ago"
+sudo journalctl -u pi-mosaic -f        # follow live
+sudo journalctl -u pi-mosaic -b        # this boot
+sudo journalctl -u pi-mosaic --since "1 hour ago"
 ```
 
 ### Deploying code changes
@@ -136,7 +230,7 @@ make deploy
 # or directly:
 ./deploy/deploy.sh [pi-host]   # defaults to $PI_HOST or "raspberrypi"
 ```
-This rsyncs the working tree to `/home/pi/mbta-tracker` (deleting anything on
+This rsyncs the working tree to `/home/pi/pi-mosaic` (deleting anything on
 the Pi that's no longer part of the repo), installs
 [`requirements-pi.txt`](#pi-python-version) into the Pi's existing virtualenv,
 and restarts the systemd service.

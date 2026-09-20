@@ -6,6 +6,7 @@ from controller.data import PixelDisplay
 from controller.displays import DisplayProtocol
 from controller.displays.adafruit import AdaFruit
 from controller.displays.simulate import Simulate
+from controller.settings import prepare_settings_file, settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,13 @@ class Dual(DisplayProtocol):
         # Port 80 (the default for http://) so the page is reachable by
         # just typing the Pi's hostname, no ":8765" needed.
         self.web = Simulate(host="0.0.0.0", port=80, open_browser=False)
+
+        # Same reason: creating the settings file under a root-owned
+        # directory needs root, but every save after this point happens on
+        # the HTTP thread long after privileges are gone. Hand the file over
+        # now, while we still can.
+        prepare_settings_file(settings.path)
+
         self.hardware = AdaFruit()
 
     @property
@@ -40,6 +48,17 @@ class Dual(DisplayProtocol):
 
     def take_pending_select(self) -> int | None:
         return self.web.take_pending_select()
+
+    @property
+    def has_viewers(self) -> bool:
+        return self.web.has_viewers
+
+    @property
+    def has_gallery_viewers(self) -> bool:
+        """Lets the main loop skip gathering every program's frame - and lets
+        off-screen programs idle - whenever nobody has the web gallery open.
+        The physical matrix is unaffected either way."""
+        return self.web.has_gallery_viewers
 
     def display_matrix(self, pixels: PixelDisplay) -> None:
         self.hardware.display_matrix(pixels=pixels)

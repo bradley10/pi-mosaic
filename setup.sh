@@ -27,8 +27,8 @@ sudo apt install python3-dev python3-pillow python3-venv libatlas-base-dev-y
 print_stars "Clone rpi-rgb-led-matrix"
 git clone https://github.com/hzeller/rpi-rgb-led-matrix
 
-print_stars "Clone mbta-tracker"
-git clone https://github.com/Jack01999/mbta-tracker
+print_stars "Clone pi-mosaic"
+git clone https://github.com/bradley10/pi-mosaic
 
 print_stars "Build the project using the standard hardware profile (default=regular))"
 cd rpi-rgb-led-matrix

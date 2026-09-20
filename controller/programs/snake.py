@@ -9,6 +9,7 @@ from random import randrange
 import numpy as np
 
 from controller.data import PixelDisplay, dimensions, draw_lines_on
+from controller.settings import settings
 from controller.timing import run_periodically, spawn_daemon
 
 BIN = 4
@@ -18,10 +19,25 @@ assert BIN % 4 == 0, "BIN must be divisible by 4"
 GAME_HEIGHT = math.floor(dimensions.height / BIN)
 GAME_WIDTH = math.floor(dimensions.width / BIN)
 
-# Colors
+# Colors. These are the defaults; the settings page can override each one,
+# so read them through the helpers below rather than using the constants
+# directly at draw time.
 APPLE_CLR = (220, 50, 50)
 SNAKE_CLR = (50, 220, 50)
 HEAD_CLR = (90, 120, 190)
+
+
+def apple_color():
+    return settings.get("snake.apple_color")
+
+
+def body_color():
+    return settings.get("snake.body_color")
+
+
+def head_color():
+    return settings.get("snake.head_color")
+
 
 # Game Settings
 INITIAL_SNAKE_LENGTH = 3
@@ -119,13 +135,6 @@ class Snake:
 
         self._pixels = self._BG.copy()
 
-        # Path caching to reduce BFS calls - cache MUCH more aggressively
-        # BFS can take 7+ seconds on complex boards, so we cache for 10+ frames
-        self._cached_path = []
-        self._cached_apple_pos = None
-        self._path_recalc_counter = 0
-        self._recalc_interval = 10  # Recalculate only every 10 frames (~500ms)
-
     @property
     def pixels(self) -> PixelDisplay:
         return self._pixels
@@ -141,7 +150,7 @@ class Snake:
         # history) which made 0.1s necessary for headroom; now that's fixed
         # and a single tick benchmarks at <1ms, so this can run faster while
         # staying steady.
-        run_periodically(self._step, interval=0.05)
+        run_periodically(self._step, interval=0.05, owner=self)
 
     def _step(self) -> None:
         self.update()
@@ -162,7 +171,7 @@ class Snake:
         apple_x, apple_y = self.apple.pos[0], self.apple.pos[1]
         x_start = apple_x * BIN
         y_start = apple_y * BIN
-        pixels[y_start : y_start + BIN, x_start : x_start + BIN] = APPLE_CLR
+        pixels[y_start : y_start + BIN, x_start : x_start + BIN] = apple_color()
 
         # Draw snake
         for idx, sqr in enumerate(self.squares):
@@ -204,7 +213,7 @@ class Snake:
             # Draw the segment directly onto the pixels array
             x_start = x_grid * BIN
             y_start = y_grid * BIN
-            color = HEAD_CLR if idx == 0 else SNAKE_CLR
+            color = head_color() if idx == 0 else body_color()
             if segment_types[y_grid, x_grid] == 0:  # Straight segment
                 dir_x, dir_y = sqr.dir
                 if dir_x != 0:  # Horizontal movement
@@ -541,61 +550,45 @@ class Snake:
                 return self.get_path_to_tail()
 
     def set_path(self):
-        # Recalculate path only every 10 frames or when apple moves/position changes
-        # BFS can spike to 7+ seconds on complex boards - aggressive caching essential
-        self._path_recalc_counter += 1
-        apple_moved = tuple(self.apple.pos) != self._cached_apple_pos
-        path_consumed = len(self._cached_path) == 0
-
-        if self._path_recalc_counter < self._recalc_interval and not apple_moved and not path_consumed:
-            return self._cached_path
-
-        self._path_recalc_counter = 0
-        self._cached_apple_pos = tuple(self.apple.pos)
-
-        # Win condition
         if self.score == SNAKE_MAX_LENGTH - 1 and self.apple.pos in get_neighbors(
             self.head.pos
         ):
-            self._cached_path = [tuple(self.apple.pos)]
+            winning_path = [tuple(self.apple.pos)]
             logger.info("Snake is about to win..")
-            return self._cached_path
+            return winning_path
 
-        # Use only fast greedy heuristic - no expensive BFS
-        # This prevents 7+ second hangs. Snake might get trapped occasionally
-        # but that's better than freezing the entire display.
-        greedy = self._greedy_path_to_apple()
-        if greedy:
-            self._cached_path = greedy
-            return greedy
+        v_snake = self.create_virtual_snake()
+        path_1 = v_snake.bfs(tuple(v_snake.head.pos), tuple(v_snake.apple.pos))
+        path_2 = []
 
-        # Fallback: try any safe move (no BFS)
-        neighbors = self.get_available_neighbors(self.head.pos)
-        if neighbors:
-            safe_move = [neighbors[0]]
-            self._cached_path = safe_move
+        if path_1:
+            for pos in path_1:
+                v_snake.go_to(pos)
+                v_snake.move()
+
+            v_snake.add_square()
+            path_2 = v_snake.get_path_to_tail()
+
+        if path_2:
+            return path_1
+
+        longest_path = self.longest_path_to_tail()
+        if (
+            longest_path
+            and self.score % 2 == 0
+            and self.moves_without_eating < MAX_MOVES_WITHOUT_EATING / 2
+        ):
+            return longest_path
+
+        safe_move = self.any_safe_move()
+        if safe_move:
             return safe_move
 
+        path_to_tail = self.get_path_to_tail()
+        if path_to_tail:
+            return path_to_tail
+
         logger.info("No available path, snake in danger!")
-        self._cached_path = []
-        return []
-
-    def _greedy_path_to_apple(self):
-        """Fast greedy: move toward apple using Manhattan distance.
-
-        Returns: [next_pos] instantly - no BFS checks.
-        Works 99% of the time. BFS fallback handles rare traps.
-        """
-        neighbors = self.get_available_neighbors(self.head.pos)
-        if not neighbors:
-            return None
-
-        best = min(
-            neighbors,
-            key=lambda n: abs(n[0] - self.apple.pos[0]) + abs(n[1] - self.apple.pos[1])
-        )
-
-        return [best]
 
     def update(self):
         path = self.set_path()
@@ -607,9 +600,9 @@ class Snake:
         def show_result(is_dead: bool):
             if is_dead:
                 lines = ["The Snake", "Is Dead", "", f"{self.total_moves} Moves"]
-                color = APPLE_CLR
+                color = apple_color()
             else:
-                color = SNAKE_CLR
+                color = body_color()
                 lines = [
                     "The Snake",
                     "Wins",

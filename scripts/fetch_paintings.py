@@ -12,6 +12,14 @@ neither of which the board itself relies on at runtime:
 To add a painting: add its title/artist/Commons file title to `SOURCES`
 below, add a matching {title, artist} entry to `ARTWORKS` in
 controller/programs/gallery.py, and re-run this script.
+
+Pass titles to rebuild only those, leaving the other assets untouched:
+
+    uv run python scripts/fetch_paintings.py "The Starry Night"
+
+Worth using. Wikimedia regenerates its server-side thumbnails from time to
+time, so a bare re-run can quietly rewrite every .npy with a slightly
+different rendering of artwork you never meant to touch.
 """
 
 from __future__ import annotations
@@ -37,12 +45,21 @@ _COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 _THUMB_WIDTH = 600
 # Wikimedia rejects requests without a descriptive User-Agent identifying
 # the client, per https://meta.wikimedia.org/wiki/User-Agent_policy.
-_HEADERS = {"User-Agent": "mbta-tracker-led-board/1.0 (personal project)"}
+_HEADERS = {"User-Agent": "pi-mosaic-led-board/1.0 (personal project)"}
 
 _OUT_DIR = Path(__file__).parent.parent / "controller" / "assets" / "paintings"
 # A small boost - LED matrices wash out subtle tonal differences a screen
 # preview doesn't, so a slightly punchier image reads better on the board.
 _CONTRAST_FACTOR = 1.2
+
+# Fraction trimmed off all four sides before the aspect crop, per source.
+# Museum scans often include a little unpainted canvas or frame edge, and at
+# 64x32 a single column is 1.5% of the width - so a fringe far too thin to
+# notice in the source lands as one conspicuously bright edge column on the
+# board. Only set this where the source actually needs it; check with the
+# column-luminance profile (a real composition doesn't jump 30+ points in one
+# column and drop straight back).
+_DEFAULT_INSET = 0.0
 
 # Chosen for bold, high-contrast color masses (survives being crushed down
 # to a 64x32 matrix) and a native aspect ratio already close to 2:1 (so the
@@ -51,12 +68,29 @@ SOURCES = [
     {
         "title": "The Great Wave",
         "file_title": "File:Tsunami by hokusai 19th century.jpg",
+        # No inset: this print's bright left column is its own sky, not a scan
+        # border. The source declines gently from luma 204 to the interior's
+        # 192 with no step, so trimming only costs composition. Checked.
     },
     {
         "title": "Wheatfield with Crows",
         "file_title": (
             "File:Vincent van Gogh - Wheatfield with crows - Google Art Project.jpg"
         ),
+    },
+    {
+        "title": "The Starry Night",
+        # The famous MoMA one. At 1.26:1 it's the furthest from the matrix's
+        # 2:1 of anything here, so the centre-crop below trims a good deal of
+        # sky and village - but the swirl, the moon and the cypress all sit in
+        # the band that survives.
+        "file_title": "File:Van Gogh - Starry Night - Google Art Project.jpg",
+        # This scan carries a bright unpainted canvas edge: the source fades
+        # from luma 139 at the left border to the interior's 89 over about ten
+        # of its 960 columns, and rises to 162 at the right. Downsized, that
+        # became a single blazing column at each end. 1% clears it (left step
+        # +37 -> +0.3, right +21 -> -3); more than that just eats composition.
+        "inset": 0.01,
     },
     {
         "title": "Starry Night Over the Rhone",
@@ -102,9 +136,9 @@ def _resolve_thumb_url(session: requests.Session, file_title: str) -> str:
     return page["imageinfo"][0]["thumburl"]
 
 
-def _to_matrix_frame(raw: bytes) -> np.ndarray:
-    """Center-crop to the matrix's aspect ratio (so the frame is fully
-    filled, no letterbox bars) and downsize.
+def _to_matrix_frame(raw: bytes, inset: float = _DEFAULT_INSET) -> np.ndarray:
+    """Trim `inset` off every side, center-crop to the matrix's aspect ratio
+    (so the frame is fully filled, no letterbox bars), and downsize.
 
     No palette quantization/dithering - Floyd-Steinberg dithering relies on
     the viewer's eye blending adjacent pixels at a distance, which works on
@@ -114,6 +148,13 @@ def _to_matrix_frame(raw: bytes) -> np.ndarray:
     pixel grid be the only "pixelation."
     """
     img = Image.open(BytesIO(raw)).convert("RGB")
+
+    # Before the aspect crop, so it trims the source's own border on all four
+    # sides rather than whichever pair the aspect crop happens to keep.
+    if inset:
+        width, height = img.size
+        dx, dy = round(width * inset), round(height * inset)
+        img = img.crop((dx, dy, width - dx, height - dy))
 
     target_ratio = dimensions.width / dimensions.height
     width, height = img.size
@@ -133,20 +174,33 @@ def _to_matrix_frame(raw: bytes) -> np.ndarray:
     return np.array(img, dtype=np.int32)
 
 
-def main() -> None:
+def _selected(titles: list) -> list:
+    """The sources named on the command line, or all of them."""
+    if not titles:
+        return SOURCES
+    wanted = {_slug(title) for title in titles}
+    chosen = [source for source in SOURCES if _slug(source["title"]) in wanted]
+    missing = wanted - {_slug(source["title"]) for source in chosen}
+    if missing:
+        known = ", ".join(repr(source["title"]) for source in SOURCES)
+        raise SystemExit(f"Unknown painting(s): {sorted(missing)}. Known: {known}")
+    return chosen
+
+
+def main(titles: list) -> None:
     _OUT_DIR.mkdir(parents=True, exist_ok=True)
     session = make_session()
 
-    for source in SOURCES:
+    for source in _selected(titles):
         thumb_url = _resolve_thumb_url(session, source["file_title"])
         response = session.get(thumb_url, headers=_HEADERS, timeout=_TIMEOUT)
         response.raise_for_status()
 
-        frame = _to_matrix_frame(response.content)
+        frame = _to_matrix_frame(response.content, source.get("inset", _DEFAULT_INSET))
         out_path = _OUT_DIR / f"{_slug(source['title'])}.npy"
         np.save(out_path, frame)
         print(f"saved {out_path} ({frame.shape})")
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

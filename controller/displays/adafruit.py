@@ -8,6 +8,7 @@ from PIL import Image
 
 from controller.data import PixelDisplay, dimensions, validate_pixels
 from controller.displays import DisplayProtocol
+from controller.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,27 @@ class AdaFruit(DisplayProtocol):
 
         self.matrix = RGBMatrix(options=options)  # type: ignore[misc]
 
+        # The settings page owns brightness from here on; seed it from the
+        # saved value so the board comes up the way it was left.
+        self._brightness = None
+        self._apply_brightness()
+
+    def _apply_brightness(self) -> None:
+        """Push `display.brightness` to the panel when it changes.
+
+        The driver does this in hardware (PWM duty cycle), so unlike the web
+        mirror it costs nothing per frame - hence only writing it on change
+        rather than scaling pixels ourselves.
+        """
+        brightness = settings.get("display.brightness")
+        if brightness == self._brightness:
+            return
+        self._brightness = brightness
+        try:
+            self.matrix.brightness = brightness
+        except Exception as err:  # older driver builds may not expose it
+            logger.info(f"Could not set matrix brightness: {err}")
+
     @validate_pixels
     def display_matrix(self, pixels: PixelDisplay):
         # Converting to a PIL image and using `SetImage` is much faster than
@@ -226,6 +248,7 @@ class AdaFruit(DisplayProtocol):
         # This may cause the matrix to flicked if enabled
         # self.matrix.Clear()
 
+        self._apply_brightness()
         self.matrix.SetImage(img)
 
     def display_image(self, img):

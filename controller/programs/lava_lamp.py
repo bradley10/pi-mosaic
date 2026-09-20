@@ -6,7 +6,8 @@ import time
 
 from controller.blob_field import Blob, render_field
 from controller.data import PixelDisplay, dimensions
-from controller.timing import spawn_daemon
+from controller.settings import settings
+from controller.timing import run_periodically, spawn_daemon
 
 BACKGROUND = (0, 0, 0)
 BANDS = [
@@ -22,20 +23,33 @@ NUM_BLOBS = 4
 
 class LavaLamp:
     def __init__(self):
-        rng = random.Random(99)
-        self._blobs = [
-            Blob(
-                x=rng.uniform(dimensions.width * 0.25, dimensions.width * 0.75),
-                y=rng.uniform(0, dimensions.height),
-                vx=0.0,
-                vy=rng.uniform(0.0125, 0.03) * rng.choice([-1, 1]),
-                radius=rng.uniform(4.0, 6.5),
-            )
-            for _ in range(NUM_BLOBS)
-        ]
-        self._bob_phase = [rng.uniform(0, math.tau) for _ in range(NUM_BLOBS)]
+        self._rng = random.Random(99)
+        self._blobs = []
+        self._bob_phase = []
+        self._match_blob_count()
         self._start_time = time.monotonic()
         self._pixels = render_field(self._blobs, BANDS, BACKGROUND)
+
+    def _match_blob_count(self) -> None:
+        """Grow or shrink the field to the `lava.blobs` setting, keeping the
+        blobs already on screen where they are. `_bob_phase` is indexed by
+        blob, so it has to stay exactly the same length."""
+        rng = self._rng
+        wanted = settings.get("lava.blobs")
+        while len(self._blobs) < wanted:
+            self._blobs.append(
+                Blob(
+                    x=rng.uniform(dimensions.width * 0.25, dimensions.width * 0.75),
+                    y=rng.uniform(0, dimensions.height),
+                    vx=0.0,
+                    vy=rng.uniform(0.0125, 0.03) * rng.choice([-1, 1]),
+                    radius=rng.uniform(4.0, 6.5),
+                )
+            )
+            self._bob_phase.append(rng.uniform(0, math.tau))
+        if len(self._blobs) > wanted:
+            del self._blobs[wanted:]
+            del self._bob_phase[wanted:]
 
     @property
     def pixels(self) -> PixelDisplay:
@@ -50,15 +64,18 @@ class LavaLamp:
         # old 0.12s - the vertical drift and bob speeds above are scaled down
         # to match, so blobs move at the same actual speed, just redrawn
         # more smoothly.
-        while True:
-            self._step()
-            self._pixels = render_field(self._blobs, BANDS, BACKGROUND)
-            time.sleep(0.03)
+        run_periodically(self._render, interval=0.03, owner=self)
+
+    def _render(self) -> None:
+        self._step()
+        self._pixels = render_field(self._blobs, BANDS, BACKGROUND)
 
     def _step(self) -> None:
+        self._match_blob_count()
         t = time.monotonic() - self._start_time
+        drift = settings.get("lava.drift")
         for i, b in enumerate(self._blobs):
-            b.y += b.vy
+            b.y += b.vy * drift
             if b.y <= b.radius or b.y >= dimensions.height - b.radius:
                 b.vy *= -1
             # slow horizontal bob, independent of vertical drift
